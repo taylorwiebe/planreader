@@ -13,7 +13,10 @@
         <h1 id="title">Preparing your reading…</h1>
         <p id="filename" class="filename"></p>
       </div>
-      <button id="source-toggle" class="secondary mobile-only" type="button">Show source</button>
+      <div class="top-actions">
+        <button id="speech-settings" class="secondary" type="button">Speech settings</button>
+        <button id="source-toggle" class="secondary mobile-only" type="button">Show source</button>
+      </div>
     </header>
 
     <main class="reader-shell">
@@ -31,6 +34,27 @@
       </aside>
     </main>
 
+    <dialog id="settings-dialog" class="settings-dialog">
+      <form method="dialog" class="settings-heading">
+        <div>
+          <p class="eyebrow">Speech settings</p>
+          <h2>Choose how Planreader sounds</h2>
+          <p>Computer voices need no setup. Optional voice packs download once and speak entirely on this Mac.</p>
+        </div>
+        <button class="secondary" value="close" aria-label="Close settings">Done</button>
+      </form>
+      <div id="fallback-notice" class="notice" hidden></div>
+      <section class="voice-card">
+        <div>
+          <h3>Computer voices</h3>
+          <p>Always available. Nothing is downloaded.</p>
+        </div>
+        <button id="use-system" class="secondary" type="button">Use computer voice</button>
+      </section>
+      <div id="model-catalog" class="model-catalog"></div>
+      <p id="settings-status" class="status" role="status"></p>
+    </dialog>
+
     <footer class="player" aria-label="Playback controls">
       <div class="player-buttons">
         <button id="previous" type="button" title="Previous sentence">Back</button>
@@ -39,8 +63,10 @@
         <button id="stop" type="button">Stop</button>
       </div>
       <div class="player-settings">
+        <span id="speech-source" class="speech-source">Computer voice</span>
         <label for="voice">Voice</label>
         <select id="voice"></select>
+        <button id="preview-voice" class="secondary" type="button">Preview</button>
         <label for="rate">Speed <span id="rate-value">1.0×</span></label>
         <input id="rate" type="range" min="0.7" max="1.4" value="1" step="0.05">
       </div>

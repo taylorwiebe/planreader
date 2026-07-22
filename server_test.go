@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -8,6 +9,13 @@ import (
 	"strings"
 	"testing"
 )
+
+type fakeSpeechSynthesizer struct{}
+
+func (fakeSpeechSynthesizer) Synthesize(context.Context, VoiceModel, string, int, float64, string) error {
+	return nil
+}
+func (fakeSpeechSynthesizer) Close() {}
 
 func TestReaderSpeechKeepsSelectedVoiceAndAvoidsRepeatedOrientationPrefix(t *testing.T) {
 	script, err := fs.ReadFile(webFiles, "web/reader.js")
@@ -74,6 +82,58 @@ func TestReaderHandlerServesDocumentData(t *testing.T) {
 	}
 	if got.Narration.Title != "Plan" {
 		t.Fatalf("title = %q, want Plan", got.Narration.Title)
+	}
+}
+
+func TestReaderHandlerExposesSpeechFallback(t *testing.T) {
+	store, err := newModelStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio, err := newSessionAudio()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer audio.Close()
+	speech := &speechService{store: store, installer: newModelInstaller(), synth: fakeSpeechSynthesizer{}, audio: audio}
+	handler := newReaderHandlerWithSpeech(ReaderDocument{}, "secret", speech)
+	request := httptest.NewRequest(http.MethodGet, "/reader/secret/api/speech", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"engine":"system"`) || !strings.Contains(response.Body.String(), "kitten-nano") {
+		t.Fatalf("unexpected speech response: %s", response.Body.String())
+	}
+}
+
+func TestReaderHandlerAllowsSpeechPreferenceWrites(t *testing.T) {
+	store, err := newModelStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio, err := newSessionAudio()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer audio.Close()
+	speech := &speechService{store: store, installer: newModelInstaller(), synth: fakeSpeechSynthesizer{}, audio: audio}
+	handler := newReaderHandlerWithSpeech(ReaderDocument{}, "secret", speech)
+	body := strings.NewReader(`{"engine":"system","system_voice":"Samantha","rate":1.15}`)
+	request := httptest.NewRequest(http.MethodPut, "/reader/secret/api/preferences", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	prefs, _, err := store.preferences()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefs.SystemVoice != "Samantha" || prefs.Rate != 1.15 {
+		t.Fatalf("preferences = %#v", prefs)
 	}
 }
 

@@ -18,6 +18,14 @@
     rate: document.querySelector("#rate"),
     rateValue: document.querySelector("#rate-value"),
     status: document.querySelector("#status"),
+    speechSource: document.querySelector("#speech-source"),
+    speechSettings: document.querySelector("#speech-settings"),
+    settingsDialog: document.querySelector("#settings-dialog"),
+    modelCatalog: document.querySelector("#model-catalog"),
+    settingsStatus: document.querySelector("#settings-status"),
+    fallbackNotice: document.querySelector("#fallback-notice"),
+    useSystem: document.querySelector("#use-system"),
+    previewVoice: document.querySelector("#preview-voice"),
   };
 
   const state = {
@@ -31,6 +39,12 @@
     selectedVoiceURI: null,
     playbackID: 0,
     activeNodes: [],
+    engine: "system",
+    modelID: "",
+    localVoice: "",
+    models: [],
+    audio: null,
+    synthController: null,
   };
 
   function element(tag, className, text) {
@@ -151,27 +165,114 @@
     return state.voices.find((voice) => voice.voiceURI === state.selectedVoiceURI) || state.selectedVoice;
   }
 
+  async function savePreferences() {
+    const response = await fetch("api/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        engine: state.engine,
+        model_id: state.modelID,
+        voice: state.localVoice,
+        system_voice: state.selectedVoiceURI || "",
+        rate: Number(elements.rate.value),
+      }),
+    });
+    if (!response.ok) throw new Error((await response.json()).error || "Could not save speech settings");
+  }
+
+  function configureVoiceMenu() {
+    elements.voice.replaceChildren();
+    if (state.engine === "local") {
+      const model = state.models.find((item) => item.id === state.modelID && item.installed);
+      if (!model) return useSystemVoice("The selected voice pack is missing, so Planreader switched to a computer voice.");
+      model.voices.forEach((name) => {
+        const option = element("option", "", name);
+        option.value = name;
+        elements.voice.append(option);
+      });
+      state.localVoice = model.voices.includes(state.localVoice) ? state.localVoice : model.voices[0];
+      elements.voice.value = state.localVoice;
+      elements.speechSource.textContent = model.name;
+      return;
+    }
+    state.voices.forEach((voice) => {
+      const option = element("option", "", `${voice.name}${voice.localService ? " — local" : ""}`);
+      option.value = voice.voiceURI;
+      elements.voice.append(option);
+    });
+    if (state.selectedVoiceURI) elements.voice.value = state.selectedVoiceURI;
+    elements.speechSource.textContent = "Computer voice";
+  }
+
+  async function speakLocal(playbackID) {
+    const controller = new AbortController();
+    state.synthController = controller;
+    const response = await fetch("api/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: state.sentences[state.index].text, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value) }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error((await response.json()).error || "Local speech failed");
+    if (!state.playing || playbackID !== state.playbackID) return;
+    const result = await response.json();
+    state.synthController = null;
+    const audio = new Audio(result.audio_url);
+    state.audio = audio;
+    audio.onended = () => advance(playbackID);
+    audio.onerror = () => failSpeech(playbackID, "The generated audio could not be played");
+    if (!state.paused) await audio.play();
+  }
+
+  function advance(playbackID) {
+    if (!state.playing || playbackID !== state.playbackID) return;
+    state.index += 1;
+    if (state.index >= state.sentences.length) {
+      stopPlayback();
+      elements.status.textContent = "Finished";
+      return;
+    }
+    speakCurrent();
+  }
+
+  function failSpeech(playbackID, message) {
+    if (playbackID !== state.playbackID) return;
+    if (state.engine === "local") {
+      const index = state.index;
+      useSystemVoice(`The local voice stopped working (${message}), so Planreader switched to a computer voice.`).then(() => playFrom(index));
+      return;
+    }
+    stopPlayback();
+    elements.status.textContent = `Speech error: ${message}`;
+  }
+
   function speakCurrent() {
     if (!state.sentences[state.index]) {
       stopPlayback();
       return;
     }
     speechSynthesis.cancel();
+    if (state.synthController) {
+      state.synthController.abort();
+      state.synthController = null;
+    }
     const playbackID = ++state.playbackID;
     highlight(state.index);
+    state.playing = true;
+    state.paused = false;
+    elements.play.textContent = "Pause";
+    if (state.engine === "local") {
+      elements.status.textContent = `Preparing sentence ${state.index + 1}…`;
+      speakLocal(playbackID).catch((error) => failSpeech(playbackID, error.message));
+      return;
+    }
     const utterance = new SpeechSynthesisUtterance(state.sentences[state.index].text);
     utterance.rate = Number(elements.rate.value);
     const voice = selectedVoice();
     if (voice) utterance.voice = voice;
     utterance.onend = () => {
       if (!state.playing || playbackID !== state.playbackID) return;
-      state.index += 1;
-      if (state.index >= state.sentences.length) {
-        stopPlayback();
-        elements.status.textContent = "Finished";
-        return;
-      }
-      speakCurrent();
+      advance(playbackID);
     };
     utterance.onerror = (event) => {
       if (playbackID !== state.playbackID) return;
@@ -180,22 +281,21 @@
       elements.status.textContent = `Speech error: ${event.error}`;
     };
     state.utterance = utterance;
-    state.playing = true;
-    state.paused = false;
-    elements.play.textContent = "Pause";
     speechSynthesis.speak(utterance);
   }
 
   function togglePlayback() {
     if (state.playing && !state.paused) {
-      speechSynthesis.pause();
+      if (state.engine === "local" && state.audio) state.audio.pause();
+      else speechSynthesis.pause();
       state.paused = true;
       elements.play.textContent = "Resume";
       elements.status.textContent = "Paused";
       return;
     }
     if (state.playing && state.paused) {
-      speechSynthesis.resume();
+      if (state.engine === "local" && state.audio) state.audio.play();
+      else speechSynthesis.resume();
       state.paused = false;
       elements.play.textContent = "Pause";
       return;
@@ -212,6 +312,11 @@
   function stopPlayback() {
     state.playbackID += 1;
     speechSynthesis.cancel();
+    if (state.audio) {
+      state.audio.pause();
+      state.audio.removeAttribute("src");
+      state.audio = null;
+    }
     state.playing = false;
     state.paused = false;
     state.utterance = null;
@@ -227,24 +332,112 @@
   function loadVoices() {
     state.voices = speechSynthesis.getVoices().filter((voice) => voice.lang.startsWith("en"));
     state.voices.sort((a, b) => Number(b.localService) - Number(a.localService) || a.name.localeCompare(b.name));
-    elements.voice.replaceChildren();
-    state.voices.forEach((voice) => {
-      const option = element("option", "", `${voice.name}${voice.localService ? " — local" : ""}`);
-      option.value = voice.voiceURI;
-      elements.voice.append(option);
-    });
     const selected = state.voices.find((voice) => voice.voiceURI === state.selectedVoiceURI);
     if (selected) {
       state.selectedVoice = selected;
-      elements.voice.value = selected.voiceURI;
+      if (state.engine === "system") configureVoiceMenu();
       return;
     }
     if (!state.selectedVoiceURI) {
       const preferred = state.voices.find((voice) => voice.localService && /Samantha|Ava|Alex/i.test(voice.name));
       state.selectedVoice = preferred || state.voices[0] || null;
       state.selectedVoiceURI = state.selectedVoice?.voiceURI || null;
-      if (state.selectedVoiceURI) elements.voice.value = state.selectedVoiceURI;
+      if (state.engine === "system") configureVoiceMenu();
     }
+  }
+
+  async function useSystemVoice(message = "") {
+    stopPlayback();
+    state.engine = "system";
+    state.modelID = "";
+    state.localVoice = "";
+    configureVoiceMenu();
+    await savePreferences();
+    renderModelCatalog();
+    if (message) {
+      elements.fallbackNotice.hidden = false;
+      elements.fallbackNotice.textContent = message;
+    }
+  }
+
+  function formatSize(bytes) { return `${Math.round(bytes / 1_000_000)} MB`; }
+
+  function renderModelCatalog() {
+    elements.modelCatalog.replaceChildren();
+    state.models.forEach((model) => {
+      const card = element("section", "voice-card");
+      const copy = element("div");
+      copy.append(element("h3", "", model.name), element("p", "", model.description));
+      copy.append(element("p", "model-meta", `${formatSize(model.size_bytes)} download · ${model.license} · Hugging Face`));
+      const actions = element("div", "model-actions");
+      if (!model.supported) {
+        actions.append(element("span", "model-meta", "Available on Apple silicon Macs"));
+      } else if (!model.installed) {
+        const install = element("button", "secondary", "Download");
+        install.type = "button";
+        install.addEventListener("click", () => installModel(model, install));
+        actions.append(install);
+      } else {
+        const use = element("button", state.engine === "local" && state.modelID === model.id ? "primary" : "secondary", state.engine === "local" && state.modelID === model.id ? "In use" : "Use voice pack");
+        use.type = "button";
+        use.addEventListener("click", async () => {
+          stopPlayback(); state.engine = "local"; state.modelID = model.id; state.localVoice = state.localVoice || model.voices[0];
+          configureVoiceMenu(); await savePreferences(); renderModelCatalog();
+        });
+        const remove = element("button", "text-button", "Remove");
+        remove.type = "button";
+        remove.addEventListener("click", () => removeModel(model));
+        actions.append(use, remove);
+      }
+      card.append(copy, actions);
+      elements.modelCatalog.append(card);
+    });
+  }
+
+  async function installModel(model, button) {
+    if (!confirm(`Download ${model.name}? It uses about ${formatSize(model.size_bytes)} and comes from the approved Hugging Face catalog.`)) return;
+    button.disabled = true;
+    button.textContent = "Downloading…";
+    elements.settingsStatus.textContent = `Downloading and checking ${model.name}. Keep this window open.`;
+    try {
+      const response = await fetch(`api/models/${model.id}/install`, { method: "POST" });
+      if (!response.ok) throw new Error((await response.json()).error || "Download failed");
+      model.installed = true;
+      elements.settingsStatus.textContent = `${model.name} is ready.`;
+      renderModelCatalog();
+    } catch (error) {
+      elements.settingsStatus.textContent = `${error.message}. Computer speech is still available.`;
+      button.disabled = false;
+      button.textContent = "Try again";
+    }
+  }
+
+  async function removeModel(model) {
+    if (!confirm(`Remove ${model.name} and recover about ${formatSize(model.size_bytes)}?`)) return;
+    const response = await fetch(`api/models/${model.id}`, { method: "DELETE" });
+    if (!response.ok) { elements.settingsStatus.textContent = (await response.json()).error; return; }
+    model.installed = false;
+    if (state.modelID === model.id) await useSystemVoice("That voice pack was removed, so Planreader switched to a computer voice.");
+    renderModelCatalog();
+  }
+
+  async function loadSpeechSettings() {
+    const response = await fetch("api/speech", { cache: "no-store" });
+    if (!response.ok) return;
+    const speech = await response.json();
+    state.models = speech.models;
+    state.engine = speech.preferences.engine;
+    state.modelID = speech.preferences.model_id || "";
+    state.localVoice = speech.preferences.voice || "";
+    state.selectedVoiceURI = speech.preferences.system_voice || null;
+    elements.rate.value = speech.preferences.rate || 1;
+    elements.rateValue.textContent = `${Number(elements.rate.value).toFixed(2).replace(/0$/, "")}×`;
+    if (speech.fell_back) {
+      elements.fallbackNotice.hidden = false;
+      elements.fallbackNotice.textContent = "Your saved voice pack is no longer available, so Planreader is using a computer voice.";
+    }
+    configureVoiceMenu();
+    renderModelCatalog();
   }
 
   function bindControls() {
@@ -256,11 +449,39 @@
     elements.previous.addEventListener("click", () => move(-1));
     elements.next.addEventListener("click", () => move(1));
     elements.voice.addEventListener("change", () => {
+      if (state.engine === "local") {
+        state.localVoice = elements.voice.value;
+        savePreferences().catch((error) => { elements.status.textContent = error.message; });
+        return;
+      }
       state.selectedVoiceURI = elements.voice.value;
       state.selectedVoice = state.voices.find((voice) => voice.voiceURI === state.selectedVoiceURI) || null;
+      savePreferences().catch((error) => { elements.status.textContent = error.message; });
     });
     elements.rate.addEventListener("input", () => {
       elements.rateValue.textContent = `${Number(elements.rate.value).toFixed(2).replace(/0$/, "")}×`;
+    });
+    elements.rate.addEventListener("change", () => savePreferences().catch((error) => { elements.status.textContent = error.message; }));
+    elements.speechSettings.addEventListener("click", () => elements.settingsDialog.showModal());
+    elements.useSystem.addEventListener("click", () => useSystemVoice());
+    elements.previewVoice.addEventListener("click", async () => {
+      stopPlayback();
+      const preview = "This is how Planreader will sound when it reads your document.";
+      if (state.engine === "system") {
+        const utterance = new SpeechSynthesisUtterance(preview);
+        const voice = selectedVoice();
+        if (voice) utterance.voice = voice;
+        utterance.rate = Number(elements.rate.value);
+        speechSynthesis.speak(utterance);
+        return;
+      }
+      elements.status.textContent = "Preparing voice preview…";
+      const response = await fetch("api/synthesize", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text: preview, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value)})});
+      if (!response.ok) { failSpeech(state.playbackID, (await response.json()).error || "Preview failed"); return; }
+      const result = await response.json();
+      state.audio = new Audio(result.audio_url);
+      await state.audio.play();
+      elements.status.textContent = "Playing preview";
     });
     elements.sourceToggle.addEventListener("click", () => {
       const visible = elements.sourcePane.classList.toggle("visible");
@@ -276,6 +497,7 @@
     }
     bindControls();
     loadVoices();
+    await loadSpeechSettings();
     if (speechSynthesis.addEventListener) {
       speechSynthesis.addEventListener("voiceschanged", loadVoices);
     } else {
