@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -34,6 +35,54 @@ func TestReaderSpeechKeepsSelectedVoiceAndAvoidsRepeatedOrientationPrefix(t *tes
 		if !strings.Contains(javascript, expected) {
 			t.Fatalf("reader JavaScript does not preserve voice selection; missing %q", expected)
 		}
+	}
+}
+
+func TestReaderPrefetchesLocalAudioAndInvalidatesItWhenSettingsChange(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(script)
+	for _, expected := range []string{
+		"localAudio: new Map()",
+		"const existing = state.localAudio.get(key)",
+		"warmLocalAudioAhead(index + 1)",
+		"current.then(() => warmLocalAudio(index + 1))",
+		"clearLocalAudio();",
+		"warmLocalAudioAhead(0)",
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Fatalf("reader JavaScript does not prefetch and invalidate local audio; missing %q", expected)
+		}
+	}
+}
+
+func TestReaderKeepsKokoroSelectedThroughTransientFailuresAndShowsLoading(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markup, err := fs.ReadFile(webFiles, "web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(script)
+	for _, expected := range []string{
+		"localRetryCount < 1",
+		"evictLocalAudio(index)",
+		"Kokoro paused. Press Play to retry.",
+		"elements.audioLoading.hidden",
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Fatalf("reader JavaScript is missing local recovery behavior %q", expected)
+		}
+	}
+	if strings.Contains(javascript, "The local voice stopped working") {
+		t.Fatal("a transient local speech error still switches to the computer voice")
+	}
+	if !strings.Contains(string(markup), `role="progressbar"`) {
+		t.Fatal("reader does not expose an accessible audio loading indicator")
 	}
 }
 
@@ -103,7 +152,7 @@ func TestReaderHandlerExposesSpeechFallback(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", response.Code)
 	}
-	if !strings.Contains(response.Body.String(), `"engine":"system"`) || !strings.Contains(response.Body.String(), "kitten-nano") {
+	if !strings.Contains(response.Body.String(), `"engine":"system"`) || !strings.Contains(response.Body.String(), "kokoro-82m") {
 		t.Fatalf("unexpected speech response: %s", response.Body.String())
 	}
 }
@@ -134,6 +183,35 @@ func TestReaderHandlerAllowsSpeechPreferenceWrites(t *testing.T) {
 	}
 	if prefs.SystemVoice != "Samantha" || prefs.Rate != 1.15 {
 		t.Fatalf("preferences = %#v", prefs)
+	}
+}
+
+func TestReaderHandlerKeepsSessionAudioAvailableForBrowserRangeRequests(t *testing.T) {
+	store, err := newModelStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio, err := newSessionAudio()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer audio.Close()
+	path, err := audio.path("sample.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("RIFF-test-audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	speech := &speechService{store: store, installer: newModelInstaller(), synth: fakeSpeechSynthesizer{}, audio: audio}
+	handler := newReaderHandlerWithSpeech(ReaderDocument{}, "secret", speech)
+	for attempt := range 2 {
+		request := httptest.NewRequest(http.MethodGet, "/reader/secret/api/audio/sample.wav", nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("attempt %d status = %d", attempt+1, response.Code)
+		}
 	}
 }
 

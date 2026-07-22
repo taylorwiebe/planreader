@@ -36,11 +36,11 @@ func (s *sherpaSynthesizer) Synthesize(ctx context.Context, model VoiceModel, te
 		}
 		base := s.store.modelDir(model.ID)
 		config := sherpa.OfflineTtsConfig{}
-		config.Model.Kitten.Model = filepath.Join(base, model.ModelFile)
-		config.Model.Kitten.Voices = filepath.Join(base, "voices.bin")
-		config.Model.Kitten.Tokens = filepath.Join(base, "tokens.txt")
-		config.Model.Kitten.DataDir = filepath.Join(base, "espeak-ng-data")
-		config.Model.Kitten.LengthScale = 1
+		config.Model.Kokoro.Model = filepath.Join(base, model.ModelFile)
+		config.Model.Kokoro.Voices = filepath.Join(base, "voices.bin")
+		config.Model.Kokoro.Tokens = filepath.Join(base, "tokens.txt")
+		config.Model.Kokoro.DataDir = filepath.Join(base, "espeak-ng-data")
+		config.Model.Kokoro.Lexicon = filepath.Join(base, "lexicon-us-en.txt") + "," + filepath.Join(base, "lexicon-gb-en.txt")
 		config.Model.NumThreads = 2
 		config.Model.Provider = "cpu"
 		config.MaxNumSentences = 1

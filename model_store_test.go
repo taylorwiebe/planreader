@@ -14,7 +14,7 @@ func TestPreferencesFallBackWhenModelIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := writeJSONAtomic(filepath.Join(store.root, "preferences.json"), SpeechPreferences{
-		Engine: "local", ModelID: "kitten-nano", Voice: "Bella", Rate: 1.1,
+		Engine: "local", ModelID: "kokoro-82m", Voice: "Heart (American)", Rate: 1.1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestInstalledModelRequiresCompleteAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model, _ := findModel("kitten-nano")
+	model, _ := findModel("kokoro-82m")
 	base := store.modelDir(model.ID)
 	manifest := installedManifest{Revision: model.Revision, Files: make(map[string]fileIntegrity)}
 	for _, name := range requiredModelAssets(model) {
@@ -92,11 +92,11 @@ func TestSessionAudioRejectsTraversalAndCleansUp(t *testing.T) {
 
 func TestApprovedCatalogStaysSmallAndPinned(t *testing.T) {
 	models := approvedModels()
-	if len(models) != 2 {
-		t.Fatalf("catalog has %d models, want 2", len(models))
+	if len(models) != 1 {
+		t.Fatalf("catalog has %d models, want 1", len(models))
 	}
 	for _, model := range models {
-		if len(model.Revision) != 40 || model.SizeBytes > 60_000_000 || len(model.Voices) != 8 {
+		if len(model.Revision) != 40 || model.SizeBytes > 192<<20 || len(model.Voices) != 28 {
 			t.Errorf("catalog entry is not bounded and pinned: %#v", model)
 		}
 	}
@@ -113,12 +113,29 @@ func TestNextPage(t *testing.T) {
 }
 
 func TestValidateDownloadURL(t *testing.T) {
-	for _, raw := range []string{"http://huggingface.co/file", "https://127.0.0.1/file", "https://huggingface.co:444/file", "https://huggingface.co@127.0.0.1/file"} {
+	for _, raw := range []string{"http://huggingface.co/file", "https://127.0.0.1/file", "https://huggingface.co:444/file", "https://huggingface.co@127.0.0.1/file", "https://us.aws.cdn.hf.co.evil.example/file"} {
 		if validateDownloadURL(raw) == nil {
 			t.Errorf("accepted %q", raw)
 		}
 	}
 	if err := validateDownloadURL("https://huggingface.co/api/models/repo/tree/revision"); err != nil {
 		t.Fatal(err)
+	}
+	if err := validateDownloadURL("https://us.aws.cdn.hf.co/xet-bridge-us/model/file"); err != nil {
+		t.Fatalf("official Hugging Face Xet CDN was rejected: %v", err)
+	}
+}
+
+func TestProgressWriterReportsCumulativeBytes(t *testing.T) {
+	var reports []int64
+	writer := &progressWriter{onProgress: func(written int64) { reports = append(reports, written) }}
+	if _, err := writer.Write([]byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("defg")); err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 2 || reports[0] != 3 || reports[1] != 7 {
+		t.Fatalf("progress reports = %v, want [3 7]", reports)
 	}
 }

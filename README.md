@@ -50,8 +50,7 @@ Press Control-C in the terminal when you are finished.
 Open **Speech settings** in the reader to choose:
 
 - **Computer voices:** no download and the fallback on every computer.
-- **Kitten Nano:** about 42 MB; the smallest approved natural voice pack.
-- **Kitten Micro:** about 59 MB; a slightly larger option with more room for natural phrasing.
+- **Kokoro 82M:** about 190 MB; a compact local model with 28 expressive American and British English voices.
 
 Voice packs are pinned, integrity-checked downloads from Hugging Face and use the Apache 2.0 license. They are stored in your Planreader application settings directory and can be removed from the same settings panel. Your selected speech source, voice, and speed are remembered for future documents. If an installed model is moved, deleted, corrupt, or incompatible, Planreader switches back to a computer voice and keeps reading available.
 

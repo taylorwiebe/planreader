@@ -70,7 +70,10 @@
         <label for="rate">Speed <span id="rate-value">1.0×</span></label>
         <input id="rate" type="range" min="0.7" max="1.4" value="1" step="0.05">
       </div>
-      <p id="status" class="status" role="status">Loading…</p>
+      <div class="player-feedback">
+        <div id="audio-loading" class="audio-loading" role="progressbar" aria-label="Preparing audio" hidden><span></span></div>
+        <p id="status" class="status" role="status">Loading…</p>
+      </div>
     </footer>
 
     <script src="reader.js"></script>

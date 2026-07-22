@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -185,6 +184,13 @@ func (s *speechService) handleAPI(w http.ResponseWriter, r *http.Request, route,
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"installed": true})
+	case strings.HasPrefix(route, "models/") && strings.HasSuffix(route, "/progress") && r.Method == http.MethodGet:
+		id := strings.TrimSuffix(strings.TrimPrefix(route, "models/"), "/progress")
+		if _, ok := findModel(id); !ok {
+			writeError(http.StatusNotFound, errors.New("unknown voice pack"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(s.installer.modelProgress(id))
 	case strings.HasPrefix(route, "models/") && r.Method == http.MethodDelete:
 		id := strings.TrimPrefix(route, "models/")
 		if err := s.store.remove(id); err != nil {
@@ -231,7 +237,6 @@ func (s *speechService) handleAPI(w http.ResponseWriter, r *http.Request, route,
 		}
 		w.Header().Set("Content-Type", "audio/wav")
 		http.ServeFile(w, r, path)
-		_ = os.Remove(path)
 	default:
 		http.NotFound(w, r)
 	}

@@ -18,6 +18,7 @@
     rate: document.querySelector("#rate"),
     rateValue: document.querySelector("#rate-value"),
     status: document.querySelector("#status"),
+    audioLoading: document.querySelector("#audio-loading"),
     speechSource: document.querySelector("#speech-source"),
     speechSettings: document.querySelector("#speech-settings"),
     settingsDialog: document.querySelector("#settings-dialog"),
@@ -44,7 +45,10 @@
     localVoice: "",
     models: [],
     audio: null,
-    synthController: null,
+    localAudio: new Map(),
+    localAudioControllers: new Map(),
+    localRetryIndex: -1,
+    localRetryCount: 0,
   };
 
   function element(tag, className, text) {
@@ -158,7 +162,7 @@
       state.activeNodes.push(source);
       if (sourceIndex === 0) source.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-    elements.status.textContent = `Sentence ${index + 1} of ${state.sentences.length}`;
+    updateAudioLoading();
   }
 
   function selectedVoice() {
@@ -190,7 +194,7 @@
         option.value = name;
         elements.voice.append(option);
       });
-      state.localVoice = model.voices.includes(state.localVoice) ? state.localVoice : model.voices[0];
+      state.localVoice = model.voices.includes(state.localVoice) ? state.localVoice : (model.default_voice || model.voices[0]);
       elements.voice.value = state.localVoice;
       elements.speechSource.textContent = model.name;
       return;
@@ -204,28 +208,104 @@
     elements.speechSource.textContent = "Computer voice";
   }
 
-  async function speakLocal(playbackID) {
+  function localAudioKey(index) {
+    return JSON.stringify([index, state.modelID, state.localVoice, Number(elements.rate.value), state.sentences[index]?.text || ""]);
+  }
+
+  function updateAudioLoading() {
+    if (state.engine !== "local" || state.audio) {
+      elements.audioLoading.hidden = true;
+      return;
+    }
+    const pending = state.localAudioControllers.has(localAudioKey(state.index));
+    elements.audioLoading.hidden = !(pending || (state.playing && !state.paused));
+  }
+
+  function evictLocalAudio(index) {
+    const key = localAudioKey(index);
+    state.localAudioControllers.get(key)?.abort();
+    state.localAudioControllers.delete(key);
+    state.localAudio.delete(key);
+    updateAudioLoading();
+  }
+
+  function clearLocalAudio() {
+    state.localAudioControllers.forEach((controller) => controller.abort());
+    state.localAudioControllers.clear();
+    state.localAudio.clear();
+    updateAudioLoading();
+  }
+
+  function prepareLocalAudio(index) {
+    if (state.engine !== "local" || !state.sentences[index]) return null;
+    const key = localAudioKey(index);
+    const existing = state.localAudio.get(key);
+    if (existing) return existing;
     const controller = new AbortController();
-    state.synthController = controller;
-    const response = await fetch("api/synthesize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: state.sentences[state.index].text, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value) }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error((await response.json()).error || "Local speech failed");
+    state.localAudioControllers.set(key, controller);
+    updateAudioLoading();
+    const pending = fetch("api/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: state.sentences[index].text, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value) }),
+        signal: controller.signal,
+      })
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json()).error || "Local speech failed");
+        return response.json();
+      })
+      .catch((error) => {
+        state.localAudio.delete(key);
+        throw error;
+      })
+      .finally(() => {
+        state.localAudioControllers.delete(key);
+        updateAudioLoading();
+      });
+    state.localAudio.set(key, pending);
+    return pending;
+  }
+
+  function warmLocalAudio(index = state.index) {
+    const pending = prepareLocalAudio(index);
+    if (pending) pending.catch(() => {});
+  }
+
+  function warmLocalAudioAhead(index = state.index) {
+    const current = prepareLocalAudio(index);
+    if (!current) return;
+    current.then(() => warmLocalAudio(index + 1)).catch(() => {});
+  }
+
+  async function speakLocal(playbackID) {
+    const index = state.index;
+    const result = await prepareLocalAudio(index);
     if (!state.playing || playbackID !== state.playbackID) return;
-    const result = await response.json();
-    state.synthController = null;
     const audio = new Audio(result.audio_url);
     state.audio = audio;
+    updateAudioLoading();
     audio.onended = () => advance(playbackID);
     audio.onerror = () => failSpeech(playbackID, "The generated audio could not be played");
-    if (!state.paused) await audio.play();
+    if (!state.paused) {
+      await audio.play();
+      state.localRetryIndex = -1;
+      state.localRetryCount = 0;
+      elements.status.textContent = "";
+      warmLocalAudioAhead(index + 1);
+    }
+  }
+
+  function releaseCurrentAudio() {
+    if (!state.audio) return;
+    state.audio.pause();
+    state.audio.removeAttribute("src");
+    state.audio = null;
+    updateAudioLoading();
   }
 
   function advance(playbackID) {
     if (!state.playing || playbackID !== state.playbackID) return;
+    releaseCurrentAudio();
     state.index += 1;
     if (state.index >= state.sentences.length) {
       stopPlayback();
@@ -239,7 +319,19 @@
     if (playbackID !== state.playbackID) return;
     if (state.engine === "local") {
       const index = state.index;
-      useSystemVoice(`The local voice stopped working (${message}), so Planreader switched to a computer voice.`).then(() => playFrom(index));
+      if (state.localRetryIndex !== index) {
+        state.localRetryIndex = index;
+        state.localRetryCount = 0;
+      }
+      if (state.localRetryCount < 1) {
+        state.localRetryCount += 1;
+        releaseCurrentAudio();
+        evictLocalAudio(index);
+        speakCurrent();
+        return;
+      }
+      stopPlayback();
+      elements.status.textContent = `Kokoro paused. Press Play to retry. ${message}`;
       return;
     }
     stopPlayback();
@@ -252,17 +344,14 @@
       return;
     }
     speechSynthesis.cancel();
-    if (state.synthController) {
-      state.synthController.abort();
-      state.synthController = null;
-    }
     const playbackID = ++state.playbackID;
     highlight(state.index);
     state.playing = true;
     state.paused = false;
     elements.play.textContent = "Pause";
     if (state.engine === "local") {
-      elements.status.textContent = `Preparing sentence ${state.index + 1}…`;
+      elements.status.textContent = "";
+      updateAudioLoading();
       speakLocal(playbackID).catch((error) => failSpeech(playbackID, error.message));
       return;
     }
@@ -289,21 +378,26 @@
       if (state.engine === "local" && state.audio) state.audio.pause();
       else speechSynthesis.pause();
       state.paused = true;
+      updateAudioLoading();
       elements.play.textContent = "Resume";
       elements.status.textContent = "Paused";
       return;
     }
     if (state.playing && state.paused) {
-      if (state.engine === "local" && state.audio) state.audio.play();
-      else speechSynthesis.resume();
+      if (state.engine === "local" && state.audio) {
+        state.audio.play();
+        warmLocalAudioAhead(state.index + 1);
+      } else speechSynthesis.resume();
       state.paused = false;
       elements.play.textContent = "Pause";
+      updateAudioLoading();
       return;
     }
     speakCurrent();
   }
 
   function playFrom(index) {
+    stopPlayback();
     state.index = Math.max(0, Math.min(index, state.sentences.length - 1));
     state.playing = true;
     speakCurrent();
@@ -312,15 +406,12 @@
   function stopPlayback() {
     state.playbackID += 1;
     speechSynthesis.cancel();
-    if (state.audio) {
-      state.audio.pause();
-      state.audio.removeAttribute("src");
-      state.audio = null;
-    }
+    releaseCurrentAudio();
     state.playing = false;
     state.paused = false;
     state.utterance = null;
     elements.play.textContent = "Play";
+    updateAudioLoading();
   }
 
   function move(amount) {
@@ -348,6 +439,7 @@
 
   async function useSystemVoice(message = "") {
     stopPlayback();
+    clearLocalAudio();
     state.engine = "system";
     state.modelID = "";
     state.localVoice = "";
@@ -381,8 +473,8 @@
         const use = element("button", state.engine === "local" && state.modelID === model.id ? "primary" : "secondary", state.engine === "local" && state.modelID === model.id ? "In use" : "Use voice pack");
         use.type = "button";
         use.addEventListener("click", async () => {
-          stopPlayback(); state.engine = "local"; state.modelID = model.id; state.localVoice = state.localVoice || model.voices[0];
-          configureVoiceMenu(); await savePreferences(); renderModelCatalog();
+          stopPlayback(); clearLocalAudio(); state.engine = "local"; state.modelID = model.id; state.localVoice = state.localVoice || model.default_voice || model.voices[0];
+          configureVoiceMenu(); await savePreferences(); renderModelCatalog(); warmLocalAudioAhead();
         });
         const remove = element("button", "text-button", "Remove");
         remove.type = "button";
@@ -399,6 +491,7 @@
     button.disabled = true;
     button.textContent = "Downloading…";
     elements.settingsStatus.textContent = `Downloading and checking ${model.name}. Keep this window open.`;
+    const progressTimer = setInterval(() => updateInstallProgress(model).catch(() => {}), 500);
     try {
       const response = await fetch(`api/models/${model.id}/install`, { method: "POST" });
       if (!response.ok) throw new Error((await response.json()).error || "Download failed");
@@ -409,7 +502,26 @@
       elements.settingsStatus.textContent = `${error.message}. Computer speech is still available.`;
       button.disabled = false;
       button.textContent = "Try again";
+    } finally {
+      clearInterval(progressTimer);
     }
+  }
+
+  async function updateInstallProgress(model) {
+    const response = await fetch(`api/models/${model.id}/progress`, { cache: "no-store" });
+    if (!response.ok) return;
+    const progress = await response.json();
+    if (progress.phase === "preparing") {
+      elements.settingsStatus.textContent = `Checking ${model.name} download…`;
+      return;
+    }
+    if (progress.phase === "verifying") {
+      elements.settingsStatus.textContent = `Verifying ${model.name}…`;
+      return;
+    }
+    if (progress.phase !== "downloading") return;
+    const percent = progress.total_bytes ? Math.min(100, Math.round(progress.bytes_done / progress.total_bytes * 100)) : 0;
+    elements.settingsStatus.textContent = `Downloading ${model.name}: ${percent}% · ${progress.files_done} of ${progress.total_files} files`;
   }
 
   async function removeModel(model) {
@@ -451,6 +563,8 @@
     elements.voice.addEventListener("change", () => {
       if (state.engine === "local") {
         state.localVoice = elements.voice.value;
+        clearLocalAudio();
+        warmLocalAudioAhead();
         savePreferences().catch((error) => { elements.status.textContent = error.message; });
         return;
       }
@@ -461,7 +575,13 @@
     elements.rate.addEventListener("input", () => {
       elements.rateValue.textContent = `${Number(elements.rate.value).toFixed(2).replace(/0$/, "")}×`;
     });
-    elements.rate.addEventListener("change", () => savePreferences().catch((error) => { elements.status.textContent = error.message; }));
+    elements.rate.addEventListener("change", () => {
+      if (state.engine === "local") {
+        clearLocalAudio();
+        warmLocalAudioAhead();
+      }
+      savePreferences().catch((error) => { elements.status.textContent = error.message; });
+    });
     elements.speechSettings.addEventListener("click", () => elements.settingsDialog.showModal());
     elements.useSystem.addEventListener("click", () => useSystemVoice());
     elements.previewVoice.addEventListener("click", async () => {
@@ -476,12 +596,20 @@
         return;
       }
       elements.status.textContent = "Preparing voice preview…";
-      const response = await fetch("api/synthesize", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text: preview, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value)})});
-      if (!response.ok) { failSpeech(state.playbackID, (await response.json()).error || "Preview failed"); return; }
-      const result = await response.json();
-      state.audio = new Audio(result.audio_url);
-      await state.audio.play();
-      elements.status.textContent = "Playing preview";
+      elements.audioLoading.hidden = false;
+      try {
+        const response = await fetch("api/synthesize", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text: preview, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value)})});
+        if (!response.ok) throw new Error((await response.json()).error || "Preview failed");
+        const result = await response.json();
+        state.audio = new Audio(result.audio_url);
+        await state.audio.play();
+        elements.status.textContent = "Playing preview";
+      } catch (error) {
+        releaseCurrentAudio();
+        elements.status.textContent = `Kokoro preview unavailable. ${error.message}`;
+      } finally {
+        elements.audioLoading.hidden = true;
+      }
     });
     elements.sourceToggle.addEventListener("click", () => {
       const visible = elements.sourcePane.classList.toggle("visible");
@@ -518,7 +646,8 @@
       renderRecap(narration);
       renderSource(readerDocument.sources);
       highlight(0);
-      elements.status.textContent = `${state.sentences.length} sentences ready`;
+      elements.status.textContent = "Ready";
+      warmLocalAudioAhead(0);
     } catch (error) {
       elements.title.textContent = "The reader could not load";
       elements.status.textContent = error.message;

@@ -197,7 +197,14 @@ func (s *ModelStore) remove(id string) error {
 }
 
 func requiredModelAssets(model VoiceModel) []string {
-	return []string{model.ModelFile, "voices.bin", "tokens.txt", "espeak-ng-data/en_dict"}
+	return []string{
+		model.ModelFile,
+		"voices.bin",
+		"tokens.txt",
+		"lexicon-us-en.txt",
+		"lexicon-gb-en.txt",
+		"espeak-ng-data/en_dict",
+	}
 }
 
 func validateSpeechRate(rate float64) error {
