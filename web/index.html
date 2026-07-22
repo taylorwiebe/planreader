@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Planreader</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Planreader</p>
+        <h1 id="title">Preparing your reading…</h1>
+        <p id="filename" class="filename"></p>
+      </div>
+      <button id="source-toggle" class="secondary mobile-only" type="button">Show source</button>
+    </header>
+
+    <main class="reader-shell">
+      <section id="narration-pane" class="pane narration-pane" aria-label="Simplified narration">
+        <div id="orientation" class="orientation"></div>
+        <div id="narration" aria-live="off"></div>
+        <div id="recap"></div>
+      </section>
+      <aside id="source-pane" class="pane source-pane" aria-label="Original document">
+        <div class="source-heading">
+          <p class="eyebrow">Original document</p>
+          <p>Use this to verify the simplified narration.</p>
+        </div>
+        <div id="source"></div>
+      </aside>
+    </main>
+
+    <footer class="player" aria-label="Playback controls">
+      <div class="player-buttons">
+        <button id="previous" type="button" title="Previous sentence">Back</button>
+        <button id="play" class="primary" type="button">Play</button>
+        <button id="next" type="button" title="Next sentence">Next</button>
+        <button id="stop" type="button">Stop</button>
+      </div>
+      <div class="player-settings">
+        <label for="voice">Voice</label>
+        <select id="voice"></select>
+        <label for="rate">Speed <span id="rate-value">1.0×</span></label>
+        <input id="rate" type="range" min="0.7" max="1.4" value="1" step="0.05">
+      </div>
+      <p id="status" class="status" role="status">Loading…</p>
+    </footer>
+
+    <script src="reader.js"></script>
+  </body>
+</html>
