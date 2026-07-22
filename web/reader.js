@@ -10,6 +10,7 @@
     source: document.querySelector("#source"),
     sourcePane: document.querySelector("#source-pane"),
     sourceToggle: document.querySelector("#source-toggle"),
+    sourceClose: document.querySelector("#source-close"),
     play: document.querySelector("#play"),
     stop: document.querySelector("#stop"),
     previous: document.querySelector("#previous"),
@@ -217,8 +218,7 @@
       elements.audioLoading.hidden = true;
       return;
     }
-    const pending = state.localAudioControllers.has(localAudioKey(state.index));
-    elements.audioLoading.hidden = !(pending || (state.playing && !state.paused));
+    elements.audioLoading.hidden = !(state.playing && !state.paused);
   }
 
   function evictLocalAudio(index) {
@@ -274,7 +274,7 @@
   function warmLocalAudioAhead(index = state.index) {
     const current = prepareLocalAudio(index);
     if (!current) return;
-    current.then(() => warmLocalAudio(index + 1)).catch(() => {});
+    current.then(() => prepareLocalAudio(index + 1)).then(() => prepareLocalAudio(index + 2)).catch(() => {});
   }
 
   async function speakLocal(playbackID) {
@@ -291,7 +291,7 @@
       state.localRetryIndex = -1;
       state.localRetryCount = 0;
       elements.status.textContent = "";
-      warmLocalAudioAhead(index + 1);
+      warmLocalAudioAhead(index);
     }
   }
 
@@ -611,9 +611,28 @@
         elements.audioLoading.hidden = true;
       }
     });
-    elements.sourceToggle.addEventListener("click", () => {
-      const visible = elements.sourcePane.classList.toggle("visible");
+    const setSourceVisible = (visible) => {
+      elements.sourcePane.classList.toggle("visible", visible);
       elements.sourceToggle.textContent = visible ? "Hide source" : "Show source";
+      elements.sourceToggle.setAttribute("aria-expanded", String(visible));
+      if (!visible) elements.sourceToggle.focus();
+    };
+    elements.sourceToggle.setAttribute("aria-controls", "source-pane");
+    elements.sourceToggle.setAttribute("aria-expanded", "false");
+    elements.sourceToggle.addEventListener("click", () => setSourceVisible(!elements.sourcePane.classList.contains("visible")));
+    elements.sourceClose.addEventListener("click", () => setSourceVisible(false));
+    document.addEventListener("click", (event) => {
+      if (!elements.sourcePane.classList.contains("visible")) return;
+      if (elements.sourcePane.contains(event.target) || elements.sourceToggle.contains(event.target)) return;
+      setSourceVisible(false);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && elements.sourcePane.classList.contains("visible")) setSourceVisible(false);
+    });
+    elements.settingsDialog.addEventListener("click", (event) => {
+      const bounds = elements.settingsDialog.getBoundingClientRect();
+      const outside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+      if (outside) elements.settingsDialog.close();
     });
     window.addEventListener("beforeunload", () => speechSynthesis.cancel());
   }

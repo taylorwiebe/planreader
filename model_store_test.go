@@ -92,12 +92,43 @@ func TestSessionAudioRejectsTraversalAndCleansUp(t *testing.T) {
 
 func TestApprovedCatalogStaysSmallAndPinned(t *testing.T) {
 	models := approvedModels()
-	if len(models) != 1 {
-		t.Fatalf("catalog has %d models, want 1", len(models))
+	if len(models) != 2 {
+		t.Fatalf("catalog has %d models, want 2", len(models))
 	}
 	for _, model := range models {
-		if len(model.Revision) != 40 || model.SizeBytes > 192<<20 || len(model.Voices) != 28 {
+		if len(model.Revision) != 40 || model.SizeBytes > maxModelInstallBytes || len(model.Voices) != 28 {
 			t.Errorf("catalog entry is not bounded and pinned: %#v", model)
+		}
+	}
+	quality, ok := findModel("kokoro-82m-quality")
+	if !ok || quality.ModelFile != "model.onnx" || quality.Repository != "csukuangfj/kokoro-multi-lang-v1_0" {
+		t.Fatalf("higher-quality Kokoro model is not configured correctly: %#v", quality)
+	}
+}
+
+func TestModelDownloadAllowsOnlyRequiredEnglishAssets(t *testing.T) {
+	model, _ := findModel("kokoro-82m-quality")
+	for _, path := range []string{
+		"model.onnx",
+		"voices.bin",
+		"lexicon-us-en.txt",
+		"espeak-ng-data/phondata",
+		"espeak-ng-data/lang/gmw/en-US",
+	} {
+		if !downloadableEntry(model, hfEntry{Type: "file", Path: path}) {
+			t.Errorf("required English asset %q was excluded", path)
+		}
+	}
+	for _, path := range []string{
+		"README.md",
+		"lexicon-zh.txt",
+		"date-zh.fst",
+		"espeak-ng-data/fr_dict",
+		"espeak-ng-data/lang/gmw/de",
+		"dict/zh.txt",
+	} {
+		if downloadableEntry(model, hfEntry{Type: "file", Path: path}) {
+			t.Errorf("unrelated repository asset %q was included", path)
 		}
 	}
 }

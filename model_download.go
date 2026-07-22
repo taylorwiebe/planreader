@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const maxModelInstallBytes = 192 << 20
+const maxModelInstallBytes = 370_000_000
 
 type hfEntry struct {
 	Type string `json:"type"`
@@ -104,7 +104,7 @@ func (d *modelInstaller) install(ctx context.Context, store *ModelStore, model V
 	manifest := installedManifest{Revision: model.Revision, Files: make(map[string]fileIntegrity)}
 	var totalFiles int
 	for _, entry := range entries {
-		if downloadableEntry(entry) {
+		if downloadableEntry(model, entry) {
 			total += entry.Size
 			totalFiles++
 		}
@@ -124,7 +124,7 @@ func (d *modelInstaller) install(ctx context.Context, store *ModelStore, model V
 	var filesDone int
 	var bytesDone int64
 	for _, entry := range entries {
-		if !downloadableEntry(entry) {
+		if !downloadableEntry(model, entry) {
 			continue
 		}
 		if err := safeRelativePath(entry.Path); err != nil {
@@ -165,8 +165,16 @@ func (d *modelInstaller) install(ctx context.Context, store *ModelStore, model V
 	return nil
 }
 
-func downloadableEntry(entry hfEntry) bool {
-	return entry.Type == "file" && entry.Path != ".gitattributes" && entry.Path != "README.md"
+func downloadableEntry(model VoiceModel, entry hfEntry) bool {
+	if entry.Type != "file" {
+		return false
+	}
+	for _, required := range requiredModelAssets(model) {
+		if entry.Path == required {
+			return true
+		}
+	}
+	return strings.HasPrefix(entry.Path, "espeak-ng-data/lang/gmw/en")
 }
 
 func (d *modelInstaller) setProgress(id string, progress InstallProgress) {

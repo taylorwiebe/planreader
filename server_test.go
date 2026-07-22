@@ -47,8 +47,8 @@ func TestReaderPrefetchesLocalAudioAndInvalidatesItWhenSettingsChange(t *testing
 	for _, expected := range []string{
 		"localAudio: new Map()",
 		"const existing = state.localAudio.get(key)",
-		"warmLocalAudioAhead(index + 1)",
-		"current.then(() => warmLocalAudio(index + 1))",
+		"warmLocalAudioAhead(index)",
+		"current.then(() => prepareLocalAudio(index + 1)).then(() => prepareLocalAudio(index + 2))",
 		"clearLocalAudio();",
 		"warmLocalAudioAhead(0)",
 	} {
@@ -72,7 +72,7 @@ func TestReaderKeepsKokoroSelectedThroughTransientFailuresAndShowsLoading(t *tes
 		"localRetryCount < 1",
 		"evictLocalAudio(index)",
 		"Kokoro paused. Press Play to retry.",
-		"elements.audioLoading.hidden",
+		"elements.audioLoading.hidden = !(state.playing && !state.paused)",
 	} {
 		if !strings.Contains(javascript, expected) {
 			t.Fatalf("reader JavaScript is missing local recovery behavior %q", expected)
@@ -83,6 +83,71 @@ func TestReaderKeepsKokoroSelectedThroughTransientFailuresAndShowsLoading(t *tes
 	}
 	if !strings.Contains(string(markup), `role="progressbar"`) {
 		t.Fatal("reader does not expose an accessible audio loading indicator")
+	}
+}
+
+func TestReaderKeepsNarrationAndSourceInIndependentScrollPanes(t *testing.T) {
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(styles)
+	for _, expected := range []string{
+		"height: 100vh",
+		"overflow: hidden",
+		"flex: 1",
+		"overflow-y: auto",
+		"overscroll-behavior: contain",
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("reader layout does not keep both documents in independent scroll panes; missing %q", expected)
+		}
+	}
+}
+
+func TestReaderUsesSimpleDesktopDividerAndMobileSourceOverlay(t *testing.T) {
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markup, err := fs.ReadFile(webFiles, "web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"border-left: 1px solid var(--line)",
+		"margin: -1.4rem -1.4rem 1rem",
+		"top: -1.4rem",
+		"top: -1.25rem",
+		"position: fixed",
+		"transform: translateX(105%)",
+		".source-pane.visible { transform: translateX(0); visibility: visible; transition-delay: 0s; }",
+	} {
+		if !strings.Contains(string(styles), expected) {
+			t.Fatalf("reader layout is missing %q", expected)
+		}
+	}
+	if !strings.Contains(string(markup), `id="source-close"`) {
+		t.Fatal("mobile source overlay has no close control")
+	}
+	if !strings.Contains(string(javascript), `elements.sourceClose.addEventListener`) {
+		t.Fatal("mobile source overlay close control is not wired")
+	}
+	if !strings.Contains(string(javascript), `event.key === "Escape"`) {
+		t.Fatal("mobile source overlay cannot be dismissed with Escape")
+	}
+	for _, expected := range []string{
+		`elements.sourcePane.contains(event.target)`,
+		`elements.settingsDialog.getBoundingClientRect()`,
+		`elements.settingsDialog.close()`,
+	} {
+		if !strings.Contains(string(javascript), expected) {
+			t.Fatalf("reader click-away behavior is missing %q", expected)
+		}
 	}
 }
 

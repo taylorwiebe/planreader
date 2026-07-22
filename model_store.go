@@ -204,6 +204,13 @@ func requiredModelAssets(model VoiceModel) []string {
 		"lexicon-us-en.txt",
 		"lexicon-gb-en.txt",
 		"espeak-ng-data/en_dict",
+		"espeak-ng-data/intonations",
+		"espeak-ng-data/phondata",
+		"espeak-ng-data/phondata-manifest",
+		"espeak-ng-data/phonindex",
+		"espeak-ng-data/phontab",
+		"espeak-ng-data/lang/gmw/en",
+		"espeak-ng-data/lang/gmw/en-US",
 	}
 }
 

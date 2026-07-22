@@ -31,8 +31,15 @@ func approvedModels() []VoiceModel {
 	supported := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 	return []VoiceModel{
 		{
-			ID: "kokoro-82m", Name: "Kokoro 82M", ModelFile: "model.int8.onnx",
-			Description: "Natural, expressive voices for comfortable long-form listening.",
+			ID: "kokoro-82m-quality", Name: "Kokoro 82M — Higher quality", ModelFile: "model.onnx",
+			Description: "Full-precision Kokoro for cleaner, more consistent long-form speech.",
+			Repository:  "csukuangfj/kokoro-multi-lang-v1_0", Revision: "7e9b67b79bfdcbd2b4bc144370345fcceac3cb0c",
+			SizeBytes: 367_000_000, License: "Apache 2.0", Voices: kokoroEnglishVoices,
+			DefaultVoice: "Heart (American)", Supported: supported,
+		},
+		{
+			ID: "kokoro-82m", Name: "Kokoro 82M — Compact", ModelFile: "model.int8.onnx",
+			Description: "Smaller and faster, with slightly reduced audio fidelity.",
 			Repository:  "csukuangfj/kokoro-int8-multi-lang-v1_0", Revision: "5d6cbe65546edb3ebae8bde976c8ad3438b3f34b",
 			SizeBytes: 189453264, License: "Apache 2.0", Voices: kokoroEnglishVoices,
 			DefaultVoice: "Heart (American)", Supported: supported,
