@@ -133,6 +133,19 @@ func writeJSONAtomic(path string, value any) error {
 
 func (s *ModelStore) modelDir(id string) string { return filepath.Join(s.root, "models", id) }
 
+func (s *ModelStore) catalog() []VoiceModel {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	models := approvedModels()
+	for i := range models {
+		models[i].Installed = s.installedLocked(models[i].ID)
+		if models[i].Installed {
+			models[i].InstallPath = s.modelDir(models[i].ID)
+		}
+	}
+	return models
+}
+
 func (s *ModelStore) installed(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

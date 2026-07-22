@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 )
 
 const maxDocumentBytes = 2 << 20
+const maxPreparedDocumentBytes = 10 << 20
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -34,11 +36,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 	codexCommand := flags.String("codex", "codex", "path to the company-authenticated Codex executable")
 	timeout := flags.Duration("timeout", 3*time.Minute, "maximum time to wait for the AI provider")
 	noOpen := flags.Bool("no-open", false, "print the reader URL without opening a browser")
+	prepared := flags.String("prepared", "", "reuse a previously prepared Planreader data.json without calling an AI provider")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	if *prepared != "" {
+		if flags.NArg() != 0 {
+			return errors.New("do not provide a Markdown document with --prepared")
+		}
+		document, err := readPreparedDocument(*prepared)
+		if err != nil {
+			return err
+		}
+		return serveReader(document, *noOpen, stdout, stderr)
+	}
 	if flags.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: planreader [options] DOCUMENT.md")
+		fmt.Fprintln(stderr, "usage: planreader [options] DOCUMENT.md\n       planreader --prepared DATA.json")
 		flags.PrintDefaults()
 		return errors.New("provide exactly one Markdown document")
 	}
@@ -130,6 +143,28 @@ func run(args []string, stdout, stderr io.Writer) error {
 		Narration: narration,
 		Sources:   renderedSources,
 	}
+	return serveReader(document, *noOpen, stdout, stderr)
+}
+
+func readPreparedDocument(path string) (ReaderDocument, error) {
+	var document ReaderDocument
+	file, err := os.Open(path)
+	if err != nil {
+		return document, fmt.Errorf("opening prepared reader data: %w", err)
+	}
+	defer file.Close()
+	if err := json.NewDecoder(io.LimitReader(file, maxPreparedDocumentBytes+1)).Decode(&document); err != nil {
+		return document, fmt.Errorf("decoding prepared reader data: %w", err)
+	}
+	if strings.TrimSpace(document.FileName) == "" || strings.TrimSpace(document.Narration.Title) == "" || len(document.Narration.Sections) == 0 || len(document.Sources) == 0 {
+		return document, errors.New("prepared reader data is incomplete")
+	}
+	return document, nil
+}
+
+func serveReader(document ReaderDocument, noOpen bool, stdout, stderr io.Writer) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	url, server, err := startReaderServer(document)
 	if err != nil {
 		return err
@@ -142,7 +177,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	fmt.Fprintf(stdout, "Reader ready: %s\n", url)
 	fmt.Fprintln(stdout, "Press Control-C when you are finished.")
-	if !*noOpen {
+	if !noOpen {
 		if err := openBrowser(url); err != nil {
 			fmt.Fprintf(stderr, "Could not open the browser automatically: %v\n", err)
 		}

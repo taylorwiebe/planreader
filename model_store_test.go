@@ -52,6 +52,10 @@ func TestInstalledModelRequiresCompleteAssets(t *testing.T) {
 	if !store.installed(model.ID) {
 		t.Fatal("complete model was not recognized")
 	}
+	catalog := store.catalog()
+	if catalog[1].ID != model.ID || catalog[1].InstallPath != base {
+		t.Fatalf("installed model path = %q, want %q", catalog[1].InstallPath, base)
+	}
 	if err := os.Remove(filepath.Join(base, "voices.bin")); err != nil {
 		t.Fatal(err)
 	}

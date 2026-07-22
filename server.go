@@ -156,10 +156,7 @@ func (s *speechService) handleAPI(w http.ResponseWriter, r *http.Request, route,
 			writeError(http.StatusInternalServerError, err)
 			return
 		}
-		models := approvedModels()
-		for i := range models {
-			models[i].Installed = s.store.installed(models[i].ID)
-		}
+		models := s.store.catalog()
 		_ = json.NewEncoder(w).Encode(map[string]any{"preferences": prefs, "models": models, "fell_back": fellBack})
 	case route == "preferences" && r.Method == http.MethodPut:
 		var prefs SpeechPreferences
@@ -183,7 +180,7 @@ func (s *speechService) handleAPI(w http.ResponseWriter, r *http.Request, route,
 			writeError(http.StatusBadGateway, err)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]bool{"installed": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"installed": true, "install_path": s.store.modelDir(model.ID)})
 	case strings.HasPrefix(route, "models/") && strings.HasSuffix(route, "/progress") && r.Method == http.MethodGet:
 		id := strings.TrimSuffix(strings.TrimPrefix(route, "models/"), "/progress")
 		if _, ok := findModel(id); !ok {

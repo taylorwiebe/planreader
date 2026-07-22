@@ -20,6 +20,7 @@
     rateValue: document.querySelector("#rate-value"),
     status: document.querySelector("#status"),
     audioLoading: document.querySelector("#audio-loading"),
+    playIcon: document.querySelector("#play-icon"),
     speechSource: document.querySelector("#speech-source"),
     speechSettings: document.querySelector("#speech-settings"),
     settingsDialog: document.querySelector("#settings-dialog"),
@@ -46,6 +47,8 @@
     localVoice: "",
     models: [],
     audio: null,
+    primedAudio: null,
+    audioContext: null,
     localAudio: new Map(),
     localAudioControllers: new Map(),
     localRetryIndex: -1,
@@ -214,11 +217,24 @@
   }
 
   function updateAudioLoading() {
-    if (state.engine !== "local" || state.audio) {
-      elements.audioLoading.hidden = true;
-      return;
+    const waiting = state.engine === "local" && !state.audio && state.playing && !state.paused;
+    elements.play.disabled = waiting;
+    elements.play.setAttribute("aria-busy", String(waiting));
+    elements.audioLoading.hidden = !waiting;
+    const label = waiting ? "Preparing audio" : (!state.playing ? "Play" : (state.paused ? "Resume" : "Pause"));
+    elements.play.setAttribute("aria-label", label);
+    elements.play.title = label;
+  }
+
+  function syncPlaybackUI() {
+    const label = !state.playing ? "Play" : (state.paused ? "Resume" : "Pause");
+    elements.playIcon.textContent = state.playing && !state.paused ? "Ⅱ" : "▶";
+    elements.play.setAttribute("aria-label", label);
+    elements.play.title = label;
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = !state.playing ? "none" : (state.paused ? "paused" : "playing");
     }
-    elements.audioLoading.hidden = !(state.playing && !state.paused);
+    updateAudioLoading();
   }
 
   function evictLocalAudio(index) {
@@ -277,13 +293,101 @@
     current.then(() => prepareLocalAudio(index + 1)).then(() => prepareLocalAudio(index + 2)).catch(() => {});
   }
 
+  function releasePrimedAudio() {
+    state.primedAudio = null;
+  }
+
+  function primeLocalAudio() {
+    if (state.engine !== "local") return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    state.audioContext ||= new AudioContextClass();
+    state.primedAudio = state.audioContext;
+    state.audioContext.resume().catch(() => {});
+  }
+
+  function bufferedAudio(context, buffer) {
+    const listeners = { play: [], pause: [] };
+    let source = null;
+    let offset = 0;
+    let startedAt = 0;
+    let stopping = false;
+    const audio = {
+      ended: false,
+      onended: null,
+      onerror: null,
+      addEventListener(type, listener) {
+        if (listeners[type]) listeners[type].push(listener);
+      },
+      async play() {
+        await context.resume();
+        if (source || audio.ended) return;
+        source = context.createBufferSource();
+        const currentSource = source;
+        currentSource.buffer = buffer;
+        currentSource.connect(context.destination);
+        currentSource.onended = () => {
+          if (source === currentSource) source = null;
+          if (stopping) {
+            stopping = false;
+            return;
+          }
+          audio.ended = true;
+          offset = 0;
+          audio.onended?.();
+        };
+        startedAt = context.currentTime;
+        currentSource.start(0, offset);
+        listeners.play.forEach((listener) => listener());
+      },
+      pause() {
+        if (!source) return;
+        offset = Math.min(buffer.duration, offset + context.currentTime - startedAt);
+        stopping = true;
+        const currentSource = source;
+        source = null;
+        currentSource.stop();
+        listeners.pause.forEach((listener) => listener());
+      },
+      removeAttribute() {
+        audio.pause();
+        audio.ended = true;
+        offset = 0;
+      },
+    };
+    return audio;
+  }
+
   async function speakLocal(playbackID) {
     const index = state.index;
     const result = await prepareLocalAudio(index);
     if (!state.playing || playbackID !== state.playbackID) return;
-    const audio = new Audio(result.audio_url);
+    const context = state.primedAudio;
+    state.primedAudio = null;
+    let audio;
+    if (context) {
+      const response = await fetch(result.audio_url);
+      if (!response.ok) throw new Error("The generated audio could not be loaded");
+      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      if (!state.playing || playbackID !== state.playbackID) return;
+      audio = bufferedAudio(context, buffer);
+    } else {
+      audio = new Audio(result.audio_url);
+    }
     state.audio = audio;
     updateAudioLoading();
+    audio.addEventListener("play", () => {
+      if (state.audio !== audio) return;
+      state.playing = true;
+      state.paused = false;
+      syncPlaybackUI();
+    });
+    audio.addEventListener("pause", () => {
+      if (state.audio !== audio || audio.ended || !state.playing) return;
+      state.paused = true;
+      elements.status.textContent = "Paused";
+      syncPlaybackUI();
+    });
     audio.onended = () => advance(playbackID);
     audio.onerror = () => failSpeech(playbackID, "The generated audio could not be played");
     if (!state.paused) {
@@ -297,9 +401,10 @@
 
   function releaseCurrentAudio() {
     if (!state.audio) return;
-    state.audio.pause();
-    state.audio.removeAttribute("src");
+    const audio = state.audio;
     state.audio = null;
+    audio.pause();
+    audio.removeAttribute("src");
     updateAudioLoading();
   }
 
@@ -348,7 +453,7 @@
     highlight(state.index);
     state.playing = true;
     state.paused = false;
-    elements.play.textContent = "Pause";
+    syncPlaybackUI();
     if (state.engine === "local") {
       elements.status.textContent = "";
       updateAudioLoading();
@@ -378,8 +483,7 @@
       if (state.engine === "local" && state.audio) state.audio.pause();
       else speechSynthesis.pause();
       state.paused = true;
-      updateAudioLoading();
-      elements.play.textContent = "Resume";
+      syncPlaybackUI();
       elements.status.textContent = "Paused";
       return;
     }
@@ -389,8 +493,7 @@
         warmLocalAudioAhead(state.index + 1);
       } else speechSynthesis.resume();
       state.paused = false;
-      elements.play.textContent = "Pause";
-      updateAudioLoading();
+      syncPlaybackUI();
       return;
     }
     speakCurrent();
@@ -398,6 +501,7 @@
 
   function playFrom(index) {
     stopPlayback();
+    primeLocalAudio();
     state.index = Math.max(0, Math.min(index, state.sentences.length - 1));
     state.playing = true;
     speakCurrent();
@@ -407,11 +511,11 @@
     state.playbackID += 1;
     speechSynthesis.cancel();
     releaseCurrentAudio();
+    releasePrimedAudio();
     state.playing = false;
     state.paused = false;
     state.utterance = null;
-    elements.play.textContent = "Play";
-    updateAudioLoading();
+    syncPlaybackUI();
   }
 
   function move(amount) {
@@ -461,6 +565,11 @@
       const copy = element("div");
       copy.append(element("h3", "", model.name), element("p", "", model.description));
       copy.append(element("p", "model-meta", `${formatSize(model.size_bytes)} download · ${model.license} · Hugging Face`));
+      if (model.installed && model.install_path) {
+        const path = element("p", "model-path");
+        path.append("Stored at ", element("code", "", model.install_path));
+        copy.append(path);
+      }
       const actions = element("div", "model-actions");
       if (!model.supported) {
         actions.append(element("span", "model-meta", "Available on Apple silicon Macs"));
@@ -473,7 +582,8 @@
         const use = element("button", state.engine === "local" && state.modelID === model.id ? "primary" : "secondary", state.engine === "local" && state.modelID === model.id ? "In use" : "Use voice pack");
         use.type = "button";
         use.addEventListener("click", async () => {
-          stopPlayback(); clearLocalAudio(); state.engine = "local"; state.modelID = model.id; state.localVoice = state.localVoice || model.default_voice || model.voices[0];
+          stopPlayback(); clearLocalAudio(); state.localVoice = state.modelID === model.id ? state.localVoice : model.default_voice;
+          state.engine = "local"; state.modelID = model.id;
           configureVoiceMenu(); await savePreferences(); renderModelCatalog(); warmLocalAudioAhead();
         });
         const remove = element("button", "text-button", "Remove");
@@ -495,7 +605,9 @@
     try {
       const response = await fetch(`api/models/${model.id}/install`, { method: "POST" });
       if (!response.ok) throw new Error((await response.json()).error || "Download failed");
+      const result = await response.json();
       model.installed = true;
+      model.install_path = result.install_path;
       elements.settingsStatus.textContent = `${model.name} is ready.`;
       renderModelCatalog();
     } catch (error) {
@@ -553,13 +665,25 @@
   }
 
   function bindControls() {
-    elements.play.addEventListener("click", togglePlayback);
+    elements.play.addEventListener("click", () => {
+      if (!state.playing) primeLocalAudio();
+      togglePlayback();
+    });
     elements.stop.addEventListener("click", () => {
       stopPlayback();
       elements.status.textContent = "Stopped";
     });
     elements.previous.addEventListener("click", () => move(-1));
     elements.next.addEventListener("click", () => move(1));
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.setActionHandler("play", () => {
+        if (!state.playing || state.paused) togglePlayback();
+      });
+      navigator.mediaSession.setActionHandler("pause", () => {
+        if (state.playing && !state.paused) togglePlayback();
+      });
+      navigator.mediaSession.setActionHandler("stop", stopPlayback);
+    }
     elements.voice.addEventListener("change", () => {
       if (state.engine === "local") {
         state.localVoice = elements.voice.value;
@@ -596,7 +720,8 @@
         return;
       }
       elements.status.textContent = "Preparing voice preview…";
-      elements.audioLoading.hidden = false;
+      elements.previewVoice.disabled = true;
+      elements.previewVoice.textContent = "Preparing…";
       try {
         const response = await fetch("api/synthesize", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text: preview, model_id: state.modelID, voice: state.localVoice, rate: Number(elements.rate.value)})});
         if (!response.ok) throw new Error((await response.json()).error || "Preview failed");
@@ -608,7 +733,8 @@
         releaseCurrentAudio();
         elements.status.textContent = `Kokoro preview unavailable. ${error.message}`;
       } finally {
-        elements.audioLoading.hidden = true;
+        elements.previewVoice.disabled = false;
+        elements.previewVoice.textContent = "Preview";
       }
     });
     const setSourceVisible = (visible) => {

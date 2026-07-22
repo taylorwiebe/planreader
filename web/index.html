@@ -54,6 +54,17 @@
         </div>
         <button id="use-system" class="secondary" type="button">Use computer voice</button>
       </section>
+      <section class="voice-card voice-config">
+        <div>
+          <h3>Voice</h3>
+          <p id="speech-source" class="speech-source">Computer voice</p>
+        </div>
+        <div class="voice-controls">
+          <label for="voice">Voice</label>
+          <select id="voice"></select>
+          <button id="preview-voice" class="secondary" type="button">Preview</button>
+        </div>
+      </section>
       <div id="model-catalog" class="model-catalog"></div>
       <p id="settings-status" class="status" role="status"></p>
     </dialog>
@@ -61,21 +72,19 @@
     <footer class="player" aria-label="Playback controls">
       <div class="player-buttons">
         <button id="previous" type="button" title="Previous sentence">Back</button>
-        <button id="play" class="primary" type="button">Play</button>
+        <button id="play" class="primary icon-button" type="button" aria-label="Play" title="Play">
+          <span id="play-icon" aria-hidden="true">▶</span>
+          <span id="audio-loading" class="button-loading" role="progressbar" aria-label="Preparing audio" hidden></span>
+        </button>
         <button id="next" type="button" title="Next sentence">Next</button>
         <button id="stop" type="button">Stop</button>
       </div>
       <div class="player-settings">
-        <span id="speech-source" class="speech-source">Computer voice</span>
-        <label for="voice">Voice</label>
-        <select id="voice"></select>
-        <button id="preview-voice" class="secondary" type="button">Preview</button>
         <label for="rate">Speed <span id="rate-value">1.0×</span></label>
         <input id="rate" type="range" min="0.7" max="1.4" value="1" step="0.05">
       </div>
       <div class="player-feedback">
-        <div id="audio-loading" class="audio-loading" role="progressbar" aria-label="Preparing audio" hidden><span></span></div>
-        <p id="status" class="status" role="status">Loading…</p>
+        <p id="status" class="status player-status" role="status">Loading…</p>
       </div>
     </footer>
 

@@ -15,6 +15,7 @@ type VoiceModel struct {
 	DefaultVoice string   `json:"default_voice"`
 	Supported    bool     `json:"supported"`
 	Installed    bool     `json:"installed"`
+	InstallPath  string   `json:"install_path,omitempty"`
 }
 
 var kokoroEnglishVoices = []string{

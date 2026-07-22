@@ -38,6 +38,37 @@ func TestReaderSpeechKeepsSelectedVoiceAndAvoidsRepeatedOrientationPrefix(t *tes
 	}
 }
 
+func TestVoiceConfigurationLivesInSettingsAndNewModelsUseTheirDefaultVoice(t *testing.T) {
+	markup, err := fs.ReadFile(webFiles, "web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := string(markup)
+	settingsStart := strings.Index(html, `id="settings-dialog"`)
+	settingsEnd := strings.Index(html, `</dialog>`)
+	voiceMenu := strings.Index(html, `id="voice"`)
+	playerStart := strings.Index(html, `class="player"`)
+	if settingsStart < 0 || settingsEnd < 0 || voiceMenu < settingsStart || voiceMenu > settingsEnd {
+		t.Fatal("voice selection is not contained in the speech settings dialog")
+	}
+	if playerStart < 0 || strings.Contains(html[playerStart:], `id="voice"`) || strings.Contains(html[playerStart:], `id="preview-voice"`) {
+		t.Fatal("the playback bar still contains voice configuration")
+	}
+	if !strings.Contains(string(javascript), `state.modelID === model.id ? state.localVoice : model.default_voice`) {
+		t.Fatal("switching Kokoro models does not start with that model's default voice")
+	}
+	for _, expected := range []string{`model.install_path`, `element("code", "", model.install_path)`, `model.install_path = result.install_path`} {
+		if !strings.Contains(string(javascript), expected) {
+			t.Fatalf("installed model location is not shown or refreshed; missing %q", expected)
+		}
+	}
+}
+
 func TestReaderPrefetchesLocalAudioAndInvalidatesItWhenSettingsChange(t *testing.T) {
 	script, err := fs.ReadFile(webFiles, "web/reader.js")
 	if err != nil {
@@ -58,6 +89,59 @@ func TestReaderPrefetchesLocalAudioAndInvalidatesItWhenSettingsChange(t *testing
 	}
 }
 
+func TestPlaybackStateFollowsAudioAndKeyboardMediaControls(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(script)
+	for _, expected := range []string{
+		`audio.addEventListener("play"`,
+		`audio.addEventListener("pause"`,
+		`navigator.mediaSession.setActionHandler("play"`,
+		`navigator.mediaSession.setActionHandler("pause"`,
+		`navigator.mediaSession.playbackState`,
+		"primedAudio: null",
+		"audioContext: null",
+		"primeLocalAudio()",
+		"state.audioContext.resume()",
+		"audio = bufferedAudio(context, buffer)",
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Fatalf("playback UI is not synchronized with media playback; missing %q", expected)
+		}
+	}
+}
+
+func TestPlaybackToolbarUsesAnIconAndHidesTextStatus(t *testing.T) {
+	markup, err := fs.ReadFile(webFiles, "web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(markup), `id="play" class="primary icon-button"`) {
+		t.Fatal("playback control is not presented as an icon button")
+	}
+	if !strings.Contains(string(markup), `id="status" class="status player-status"`) {
+		t.Fatal("toolbar status is not isolated for visually hidden announcements")
+	}
+	for _, expected := range []string{`"▶"`, `"Ⅱ"`, `elements.play.setAttribute("aria-label"`} {
+		if !strings.Contains(string(javascript), expected) {
+			t.Fatalf("playback icon state is missing %q", expected)
+		}
+	}
+	if !strings.Contains(string(styles), ".player-status {") || !strings.Contains(string(styles), "clip-path: inset(50%)") {
+		t.Fatal("toolbar text status remains visually visible")
+	}
+}
+
 func TestReaderKeepsKokoroSelectedThroughTransientFailuresAndShowsLoading(t *testing.T) {
 	script, err := fs.ReadFile(webFiles, "web/reader.js")
 	if err != nil {
@@ -67,12 +151,18 @@ func TestReaderKeepsKokoroSelectedThroughTransientFailuresAndShowsLoading(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
 	javascript := string(script)
 	for _, expected := range []string{
 		"localRetryCount < 1",
 		"evictLocalAudio(index)",
 		"Kokoro paused. Press Play to retry.",
-		"elements.audioLoading.hidden = !(state.playing && !state.paused)",
+		"elements.play.disabled = waiting",
+		`elements.play.setAttribute("aria-busy", String(waiting))`,
+		"elements.audioLoading.hidden = !waiting",
 	} {
 		if !strings.Contains(javascript, expected) {
 			t.Fatalf("reader JavaScript is missing local recovery behavior %q", expected)
@@ -83,6 +173,18 @@ func TestReaderKeepsKokoroSelectedThroughTransientFailuresAndShowsLoading(t *tes
 	}
 	if !strings.Contains(string(markup), `role="progressbar"`) {
 		t.Fatal("reader does not expose an accessible audio loading indicator")
+	}
+	playStart := strings.Index(string(markup), `id="play"`)
+	if playStart < 0 {
+		t.Fatal("reader is missing the play button")
+	}
+	playEnd := playStart + strings.Index(string(markup)[playStart:], `</button>`)
+	loading := strings.Index(string(markup), `id="audio-loading"`)
+	if playEnd < playStart || loading < playStart || loading > playEnd {
+		t.Fatal("audio loading indicator is not contained in the play button")
+	}
+	if !strings.Contains(string(styles), ".button-loading::after") {
+		t.Fatal("play button loading indicator does not preserve the horizontal moving bar")
 	}
 }
 
@@ -98,6 +200,8 @@ func TestReaderKeepsNarrationAndSourceInIndependentScrollPanes(t *testing.T) {
 		"flex: 1",
 		"overflow-y: auto",
 		"overscroll-behavior: contain",
+		"padding-bottom: 10rem",
+		"scroll-padding-bottom: 10rem",
 	} {
 		if !strings.Contains(css, expected) {
 			t.Fatalf("reader layout does not keep both documents in independent scroll panes; missing %q", expected)
@@ -121,8 +225,9 @@ func TestReaderUsesSimpleDesktopDividerAndMobileSourceOverlay(t *testing.T) {
 	for _, expected := range []string{
 		"border-left: 1px solid var(--line)",
 		"margin: -1.4rem -1.4rem 1rem",
-		"top: -1.4rem",
-		"top: -1.25rem",
+		"top: calc(-1.4rem - 2px)",
+		"box-shadow: 0 -4px 0 var(--paper)",
+		"top: calc(-1.25rem - 2px)",
 		"position: fixed",
 		"transform: translateX(105%)",
 		".source-pane.visible { transform: translateX(0); visibility: visible; transition-delay: 0s; }",
@@ -147,6 +252,47 @@ func TestReaderUsesSimpleDesktopDividerAndMobileSourceOverlay(t *testing.T) {
 	} {
 		if !strings.Contains(string(javascript), expected) {
 			t.Fatalf("reader click-away behavior is missing %q", expected)
+		}
+	}
+}
+
+func TestReaderControlsStayUsableOnMobile(t *testing.T) {
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(styles)
+	for _, expected := range []string{
+		"min-height: 2.75rem",
+		"align-items: flex-start",
+		"width: fit-content",
+		"grid-template-columns: auto auto",
+		"grid-template-columns: repeat(2, minmax(0, 1fr))",
+		"grid-template-columns: repeat(4, minmax(0, 1fr))",
+		".player-buttons button",
+		"flex-direction: column",
+		"white-space: nowrap",
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("mobile controls are missing responsive rule %q", expected)
+		}
+	}
+}
+
+func TestRecallPromptUsesAStableBlockCallout(t *testing.T) {
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(styles)
+	for _, expected := range []string{
+		".recall {",
+		"display: block",
+		"border-left: 3px solid var(--accent)",
+		".recall.active { background: var(--accent-soft); box-shadow: none; }",
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("recall prompt is missing stable callout styling %q", expected)
 		}
 	}
 }
