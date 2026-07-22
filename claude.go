@@ -148,6 +148,10 @@ Resolve references inline. Instead of pointing the listener to a file, section, 
 
 Do not invent terminology. Explain unfamiliar acronyms, codenames, and shorthand once in ordinary language, or replace them with what they mean. Remove navigation, metadata, repeated boilerplate, and procedural instructions aimed at an AI agent. Preserve consequential facts, decisions, uncertainty, security implications, and meaningful constraints.
 
+If the source contains a valuable technical diagram, include it in the human briefing and walk through its meaning in clear prose. Explain the important components, the direction of data or control flow, and why the relationships matter. Preserve consequential labels and boundaries, but do not read diagram syntax or reproduce every node and arrow. Omit diagrams that are decorative, redundant, or too implementation-specific to improve understanding.
+
+Do not silently turn assumptions, proposals, predictions, estimates, or unverified claims into established facts. Preserve the source's level of certainty. When an assumption materially affects the proposal, benefit, risk, or conclusion, label it as an assumption and explain what would need to be true. Distinguish what the source demonstrates from what it merely expects. If the source does not provide evidence for an important claim, say so plainly and add the claim to the verify list. Do not add assumptions of your own to bridge missing information.
+
 If secondary technical detail genuinely matters, put it in a final narration section titled "Details worth knowing" rather than weaving it through the main explanation. Omit that section when there are no essential details.
 
 After each major idea, provide one short recall question. The closing remember, decisions, actions, and verify lists should be concise, concrete, and non-repetitive. Put unsupported, ambiguous, or verification-worthy claims in the verify list rather than guessing.

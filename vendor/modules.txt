@@ -1,0 +1,23 @@
+# github.com/k2-fsa/sherpa-onnx-go v1.13.4
+## explicit; go 1.17
+github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx
+# github.com/k2-fsa/sherpa-onnx-go-linux v1.13.4
+## explicit; go 1.17
+github.com/k2-fsa/sherpa-onnx-go-linux
+# github.com/k2-fsa/sherpa-onnx-go-macos v1.13.4
+## explicit; go 1.17
+github.com/k2-fsa/sherpa-onnx-go-macos
+# github.com/k2-fsa/sherpa-onnx-go-windows v1.13.4
+## explicit; go 1.17
+github.com/k2-fsa/sherpa-onnx-go-windows
+# github.com/yuin/goldmark v1.7.13
+## explicit; go 1.22
+github.com/yuin/goldmark
+github.com/yuin/goldmark/ast
+github.com/yuin/goldmark/extension
+github.com/yuin/goldmark/extension/ast
+github.com/yuin/goldmark/parser
+github.com/yuin/goldmark/renderer
+github.com/yuin/goldmark/renderer/html
+github.com/yuin/goldmark/text
+github.com/yuin/goldmark/util

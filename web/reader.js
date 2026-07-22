@@ -208,6 +208,11 @@
       option.value = voice.voiceURI;
       elements.voice.append(option);
     });
+    if (!state.voices.length) {
+      const option = element("option", "", "Loading computer voices…");
+      option.disabled = true;
+      elements.voice.append(option);
+    }
     if (state.selectedVoiceURI) elements.voice.value = state.selectedVoiceURI;
     elements.speechSource.textContent = "Computer voice";
   }
@@ -533,12 +538,10 @@
       if (state.engine === "system") configureVoiceMenu();
       return;
     }
-    if (!state.selectedVoiceURI) {
-      const preferred = state.voices.find((voice) => voice.localService && /Samantha|Ava|Alex/i.test(voice.name));
-      state.selectedVoice = preferred || state.voices[0] || null;
-      state.selectedVoiceURI = state.selectedVoice?.voiceURI || null;
-      if (state.engine === "system") configureVoiceMenu();
-    }
+    const preferred = state.voices.find((voice) => voice.localService && /Samantha|Ava|Alex/i.test(voice.name));
+    state.selectedVoice = preferred || state.voices[0] || null;
+    state.selectedVoiceURI = state.selectedVoice?.voiceURI || null;
+    if (state.engine === "system") configureVoiceMenu();
   }
 
   async function useSystemVoice(message = "") {
@@ -547,7 +550,7 @@
     state.engine = "system";
     state.modelID = "";
     state.localVoice = "";
-    configureVoiceMenu();
+    loadVoices();
     await savePreferences();
     renderModelCatalog();
     if (message) {
@@ -769,13 +772,13 @@
       return;
     }
     bindControls();
-    loadVoices();
-    await loadSpeechSettings();
     if (speechSynthesis.addEventListener) {
       speechSynthesis.addEventListener("voiceschanged", loadVoices);
     } else {
       speechSynthesis.onvoiceschanged = loadVoices;
     }
+    loadVoices();
+    await loadSpeechSettings();
 
     try {
       const response = await fetch("data.json", { cache: "no-store" });

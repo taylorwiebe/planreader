@@ -1,0 +1,4 @@
+interface:
+  display_name: "Read with Planreader"
+  short_description: "Open Markdown as a private spoken briefing"
+  default_prompt: "Use $read-with-planreader to open this Markdown document as a spoken briefing."

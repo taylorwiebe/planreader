@@ -84,6 +84,10 @@ func TestNarrationPromptProducesASelfContainedHumanBriefing(t *testing.T) {
 		"Resolve references inline",
 		"complete sentences",
 		"Details worth knowing",
+		"valuable technical diagram",
+		"walk through its meaning",
+		"Do not silently turn assumptions",
+		"label it as an assumption",
 	} {
 		if !strings.Contains(prompt, instruction) {
 			t.Fatalf("narration prompt is missing human-reader instruction %q", instruction)

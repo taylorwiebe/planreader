@@ -38,6 +38,33 @@ func TestReaderSpeechKeepsSelectedVoiceAndAvoidsRepeatedOrientationPrefix(t *tes
 	}
 }
 
+func TestComputerVoiceListRefreshesWhenSwitchingFromKokoro(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(script)
+	start := strings.Index(javascript, "async function start()")
+	if start < 0 {
+		t.Fatal("reader startup function is missing")
+	}
+	startup := javascript[start:]
+	listener := strings.Index(startup, `speechSynthesis.addEventListener("voiceschanged", loadVoices)`)
+	initialLoad := strings.Index(startup, "loadVoices();")
+	settingsLoad := strings.Index(startup, "await loadSpeechSettings();")
+	if listener < 0 || initialLoad < 0 || settingsLoad < 0 || listener > initialLoad || listener > settingsLoad {
+		t.Fatal("the reader can miss browser voices that become available while settings load")
+	}
+	useSystemStart := strings.Index(javascript, "async function useSystemVoice")
+	useSystemEnd := strings.Index(javascript[useSystemStart:], "\n  function formatSize")
+	if useSystemStart < 0 || useSystemEnd < 0 || !strings.Contains(javascript[useSystemStart:useSystemStart+useSystemEnd], "loadVoices();") {
+		t.Fatal("switching from Kokoro does not refresh the browser voice list")
+	}
+	if !strings.Contains(javascript, "Loading computer voices…") {
+		t.Fatal("an empty browser voice list has no visible loading state")
+	}
+}
+
 func TestVoiceConfigurationLivesInSettingsAndNewModelsUseTheirDefaultVoice(t *testing.T) {
 	markup, err := fs.ReadFile(webFiles, "web/index.html")
 	if err != nil {
@@ -224,10 +251,9 @@ func TestReaderUsesSimpleDesktopDividerAndMobileSourceOverlay(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"border-left: 1px solid var(--line)",
-		"margin: -1.4rem -1.4rem 1rem",
-		"top: calc(-1.4rem - 2px)",
-		"box-shadow: 0 -4px 0 var(--paper)",
-		"top: calc(-1.25rem - 2px)",
+		".source-scroll {",
+		"overflow-y: auto",
+		"flex: 0 0 auto",
 		"position: fixed",
 		"transform: translateX(105%)",
 		".source-pane.visible { transform: translateX(0); visibility: visible; transition-delay: 0s; }",
@@ -238,6 +264,9 @@ func TestReaderUsesSimpleDesktopDividerAndMobileSourceOverlay(t *testing.T) {
 	}
 	if !strings.Contains(string(markup), `id="source-close"`) {
 		t.Fatal("mobile source overlay has no close control")
+	}
+	if !strings.Contains(string(markup), `id="source" class="source-scroll"`) {
+		t.Fatal("source document does not scroll independently below its fixed heading")
 	}
 	if !strings.Contains(string(javascript), `elements.sourceClose.addEventListener`) {
 		t.Fatal("mobile source overlay close control is not wired")
@@ -293,6 +322,24 @@ func TestRecallPromptUsesAStableBlockCallout(t *testing.T) {
 	} {
 		if !strings.Contains(css, expected) {
 			t.Fatalf("recall prompt is missing stable callout styling %q", expected)
+		}
+	}
+}
+
+func TestSourceHighlightUsesASubtleReadingCue(t *testing.T) {
+	styles, err := fs.ReadFile(webFiles, "web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(styles)
+	for _, expected := range []string{
+		"border-left: 3px solid transparent",
+		"border-left-color: var(--accent)",
+		"background: linear-gradient(90deg, var(--source-active)",
+		"border-radius: 0 8px 8px 0",
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("source highlight is missing subtle reading cue %q", expected)
 		}
 	}
 }
