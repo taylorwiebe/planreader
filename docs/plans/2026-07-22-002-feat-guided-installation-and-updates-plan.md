@@ -15,7 +15,7 @@ execution: code
 
 - **Objective:** Let an Apple-silicon Mac user ask Claude or Codex to install and update Planreader without cloning the repository or understanding Go, shell paths, or skill directories.
 - **Product authority:** This contract defines the supported installation journey, agent integration, update behavior, user-scope defaults, and source-build fallback.
-- **Open blockers:** None. The implementation uses GitHub Releases, current user-scoped Claude and Codex skill locations, and a release workflow that can sign and notarize artifacts when credentials are configured.
+- **Open blockers:** None. The implementation uses GitHub Releases, current user-scoped Claude and Codex skill locations, and requires Developer ID signing and notarization before publishing a stable release.
 - **Execution profile:** Code change with test-first coverage for filesystem transactions, release downloads, skill parity, and CLI behavior.
 - **Tail ownership:** The shipping workflow owns review, release-workflow validation, documentation, commit, pull request, and CI follow-through.
 
@@ -59,7 +59,7 @@ Installation should instead feel like a product capability. Users should be able
 - R3. The first release must reject unsupported operating systems or architectures with a clear explanation instead of attempting a partial installation.
 - R4. Installation must obtain the latest compatible Apple-silicon macOS release and verify its authenticity or integrity before activation.
 - R5. Planreader must install for the current user in a location that remains available across terminal sessions.
-- R6. When the command location is not already reachable, installation must safely add it to the user's supported shell path configuration and explain the change.
+- R6. For zsh, when the command location is not already reachable, installation must safely add it to the user's shell path configuration and explain the change; other shells receive a manual recovery command.
 
 **Agent integration**
 
@@ -86,9 +86,9 @@ Installation should instead feel like a product capability. Users should be able
 
 **Agent-readable operation**
 
-- R21. Install, update, update-check, version, and integration-status operations must offer stable machine-readable results alongside their human summaries.
+- R21. Install, update, update-check, and version operations must provide deterministic exit codes and plain-language summaries suitable for an agent to relay.
 - R22. The installed skill must invoke the installed Planreader executable from any working directory instead of locating this repository or running Go.
-- R23. Planreader must expose integration status and repair behavior so an agent can report version, destination, compatibility, and recovery without inferring filesystem state.
+- R23. Re-running install or update must inspect and repair managed integration drift without requiring users or agents to manipulate skill directories.
 - R24. Planreader must refuse to overwrite a same-named skill it does not manage and must explain how the user can resolve the collision.
 
 ### Key Flows
@@ -119,7 +119,7 @@ Installation should instead feel like a product capability. Users should be able
 - AE1. Clean Apple-silicon Mac
   - **Given:** The user has a signed-in Claude or Codex installation but no Planreader checkout or Go toolchain.
   - **When:** The user asks the agent to install Planreader from its public reference.
-  - **Then:** The latest verified release is installed for that user, detected agent skills are configured, and the `planreader` command works in a new terminal.
+  - **Then:** The latest verified release is installed for that user, detected agent skills are configured, and the `planreader` command works in a new zsh terminal.
   - **Covers:** R1-R10, R17
 
 - AE2. Both agents detected
@@ -164,6 +164,7 @@ Installation should instead feel like a product capability. Users should be able
 - Linux, Windows, and Intel Mac release installation are deferred.
 - Fully automatic background updates are outside the first release.
 - A graphical installer and package-manager distribution are deferred.
+- Automatic shell configuration beyond zsh is deferred; other shells receive a manual PATH command.
 - System-wide installation and multi-user machine administration are outside the first release.
 - Installing or authenticating Claude or Codex themselves remains the user's responsibility.
 - Automatic source builds are a fallback, not the normal installation experience.
@@ -180,17 +181,17 @@ Installation should instead feel like a product capability. Users should be able
 
 ## Planning Contract
 
-**Product Contract preservation:** Changed R21-R24 to make the already-approved conversational installation and update behavior testable through stable agent-readable results, repository-independent skills, integration repair, and collision safety.
+**Product Contract preservation:** Changed R21-R24 to make the already-approved conversational installation and update behavior testable through deterministic results, repository-independent skills, integration repair, and collision safety.
 
 ### Key Technical Decisions
 
 - KTD1. **Use the CLI as the shared human and agent installation API.** Cobra subcommands provide install, update, version, and integration status/repair while the existing `planreader DOCUMENT.md` behavior remains compatible.
 - KTD2. **Keep release payloads version-locked.** The executable embeds the complete `read-with-planreader` skill and build metadata, so one release is the authority for binary and skill compatibility.
 - KTD3. **Use a versioned current-user layout.** Release contents live in the Planreader application-support directory, while `~/.local/bin/planreader` is an atomically replaced symlink to the active version; application preferences and voice models remain outside version directories.
-- KTD4. **Treat multi-destination activation as a recoverable transaction.** Stage and verify every artifact, back up managed skill directories, activate skills, switch the executable last, and restore prior managed state when a required activation step fails. An unavailable optional agent integration produces a usable-with-attention result under R9 rather than rolling back the application.
-- KTD5. **Own shell edits with a marked block.** On Apple-silicon macOS, add an idempotent Planreader-owned `~/.local/bin` block to the zsh login profile without rewriting unrelated content. Report the exact file and use the executable's absolute path during the current agent session.
+- KTD4. **Treat multi-destination activation as a journaled recoverable transaction.** Persist prior and target versions before live mutation, retain prior managed directories, use atomic per-destination swaps, switch the executable last, and recover or complete an interrupted transaction at the start of every install or update. Failure to update a previously managed skill rolls back the update; inability to add a newly detected integration produces a usable-with-attention result under R9.
+- KTD5. **Own shell edits with a marked block.** On Apple-silicon macOS, add an idempotent Planreader-owned `~/.local/bin` block to the zsh login profile without rewriting unrelated content. Refuse symlinked or non-user-owned profile targets, preserve unrelated bytes and mode through atomic compare-before-swap replacement, report the exact file, and use the executable's absolute path during the current agent session. Other shells receive a manual command.
 - KTD6. **Centralize agent adapters.** Claude targets `~/.claude/skills/read-with-planreader`; Codex targets `$CODEX_HOME/skills/read-with-planreader` or `~/.codex/skills/read-with-planreader`. Each adapter distinguishes absent, writable, managed, and unmanaged-collision states.
-- KTD7. **Use GitHub Releases as the first release service.** Resolve one immutable version, download a bounded Apple-silicon archive and checksum manifest over HTTPS, verify SHA-256 before extraction, and reject path traversal or unexpected payloads. Release automation signs with Developer ID and notarizes the distribution archive when repository secrets are available.
+- KTD7. **Use signed and notarized GitHub Releases as the first release service.** Resolve one immutable version, download a bounded Apple-silicon archive and checksum manifest over HTTPS, and verify SHA-256. Accept only an exact allowlist of regular files and directories; reject absolute paths, traversal, links, devices, sockets, duplicate entries, and unsafe modes; keep canonical destinations beneath a new `0700` staging directory. Stable publication requires Developer ID signing and notarization, and installation verifies the expected Team ID and notarization result before activation.
 - KTD8. **Make source-build replacement explicit.** Builds without release metadata report `dev` and `source`; update checks explain that state, and replacement with an official binary requires an explicit `--replace-source` choice.
 - KTD9. **Check quietly and never update implicitly.** Cache the last successful release check for 24 hours, use a short timeout, suppress network failures during reader startup, and print only an available-version notice.
 - KTD10. **Refuse unmanaged skill collisions.** A Planreader manifest marks owned skill directories. Repair and update may replace only managed copies; unrelated same-named skills remain untouched until the user resolves the conflict.
@@ -208,13 +209,14 @@ flowchart TB
   G --> H[Atomically switch command symlink]
   H --> I[Persist installation manifest]
   I --> J[Report human and structured result]
-  G -->|activation failure| K[Restore prior managed skills]
+  G -->|required managed-skill activation failure| K[Recover old transaction state]
+  G -->|new optional integration unavailable| J
   H -->|switch failure| K
 ```
 
-The `internal/install` package owns paths, manifests, agent adapters, shell configuration, transactions, and status/repair. The `internal/release` package owns version metadata, GitHub release resolution, download validation, checksums, safe archive extraction, update-check caching, and update orchestration. Both expose dependency-injected services so tests use temporary homes and local HTTP servers.
+The `internal/install` package owns paths, manifests, agent adapters, shell configuration, journaled transactions, and repair-on-rerun. The `internal/release` package owns version metadata, GitHub release resolution, download validation, checksums, safe archive extraction, update-check caching, and update orchestration. Both expose dependency-injected services so tests use temporary homes and local HTTP servers.
 
-The application embeds `skills/read-with-planreader` through a small payload package. Release builds inject version, commit, and origin values. Human output remains concise, while a shared result schema supports `--json` on non-reader subcommands.
+The `skills` Go package embeds `skills/read-with-planreader` and exposes it to installation code. Release builds inject version, commit, and origin values. Operational commands use deterministic exit codes and concise human output.
 
 ### Sequencing
 
@@ -227,9 +229,9 @@ The application embeds `skills/read-with-planreader` through a small payload pac
 ### System-Wide Impact and Risks
 
 - The existing skill's repository discovery and `go run -mod=vendor` behavior is incompatible with release installation and must change in the same release.
-- A shell profile edit cannot change the parent agent's environment. Installation output must provide the absolute executable path and explain that new sessions will resolve `planreader` normally.
+- A shell profile edit cannot change the parent agent's environment. Installation output must provide the absolute executable path and explain that new zsh sessions will resolve `planreader` normally.
 - Updating a running executable is safe only through the versioned layout and final symlink switch. Direct in-place replacement is prohibited.
-- GitHub-hosted checksums protect against corruption but share the release account's trust boundary. Developer ID signing, notarization, immutable releases, and CI provenance strengthen authenticity.
+- GitHub-hosted checksums protect against corruption but share the release account's trust boundary. Stable releases therefore require Developer ID signing, notarization, immutable releases, expected-Team-ID validation, and CI provenance.
 - Skill conventions can change independently of Planreader. Agent-specific path and detection logic stays behind adapters with focused tests and status reporting.
 - Active Claude or Codex sessions may retain an old loaded skill after on-disk replacement. Update output must request a new session or skill reload rather than claiming the current session changed.
 
@@ -250,17 +252,17 @@ The application embeds `skills/read-with-planreader` through a small payload pac
 
 - **Goal:** Add build identity, embed the complete skill payload, and introduce install-oriented Cobra subcommands without breaking document reading.
 - **Requirements:** R7, R17, R20-R23
-- **Files:** `cmd/root.go`, `cmd/root_test.go`, `cmd/version.go`, `cmd/version_test.go`, `internal/buildinfo/buildinfo.go`, `internal/payload/payload.go`, `internal/payload/payload_test.go`, `skills/read-with-planreader/SKILL.md`, `skills/read-with-planreader/agents/openai.yaml`
-- **Approach:** Split reader argument validation from the root so `install`, `update`, `version`, and `integrations` subcommands can coexist with the positional document path. Embed skill files and expose release identity with source-build defaults. Add `--json` result rendering for operational commands.
-- **Test scenarios:** Existing document/help behavior remains compatible; release and source identities render correctly; embedded skill contains both required files; JSON and human output are stable; installed skill invokes `planreader` rather than Go or repository discovery.
-- **Verification:** `go test -mod=vendor ./cmd ./internal/buildinfo ./internal/payload`
+- **Files:** `cmd/root.go`, `cmd/root_test.go`, `cmd/version.go`, `cmd/version_test.go`, `internal/buildinfo/buildinfo.go`, `skills/embed.go`, `skills/embed_test.go`, `skills/read-with-planreader/SKILL.md`, `skills/read-with-planreader/agents/openai.yaml`
+- **Approach:** Split reader argument validation from the root so `install`, `update`, and `version` subcommands can coexist with the positional document path. Embed skill files from the `skills` package and expose release identity with source-build defaults.
+- **Test scenarios:** Existing document/help behavior remains compatible; release and source identities render correctly; embedded skill contains both required files; exit codes and human output are stable; installed skill invokes `planreader` rather than Go or repository discovery.
+- **Verification:** `go test -mod=vendor ./cmd ./internal/buildinfo ./skills`
 
 ### U2. Current-user installation and agent integration state
 
 - **Goal:** Install and repair the local application layout, shell path, and managed Claude/Codex skills idempotently.
 - **Requirements:** R2-R3, R5-R10, R17, R21-R24
-- **Files:** `internal/install/paths.go`, `internal/install/manifest.go`, `internal/install/agents.go`, `internal/install/shell.go`, `internal/install/service.go`, `internal/install/install_test.go`, `cmd/install.go`, `cmd/integrations.go`
-- **Approach:** Use injected home, config, platform, lookup, and filesystem seams. Store managed versions under application support, atomically switch the command symlink, write an ownership manifest into managed skill directories, refuse unmanaged collisions, and append one marked zsh path block. Expose status and repair through the same service.
+- **Files:** `internal/install/paths.go`, `internal/install/manifest.go`, `internal/install/agents.go`, `internal/install/shell.go`, `internal/install/service.go`, `internal/install/install_test.go`, `cmd/install.go`
+- **Approach:** Use injected home, config, platform, lookup, and filesystem seams. Store managed versions under application support, atomically switch the command symlink, write an ownership manifest into managed skill directories, refuse unmanaged collisions, and append one marked zsh path block. Re-running the service inspects and repairs managed drift. Canonicalize agent paths, reject symlinked or non-user-owned destinations, and require explicit confirmation for a `CODEX_HOME` outside the user's home.
 - **Test scenarios:** Clean Claude-only, Codex-only, both-agent, and no-agent installs; unsupported platform; `$CODEX_HOME`; idempotent rerun; exact marked shell edit; unmanaged collision; one unwritable integration; current-session absolute path; status and repair output; preservation of speech settings and models.
 - **Verification:** `go test -mod=vendor ./internal/install ./cmd`
 
@@ -269,8 +271,8 @@ The application embeds `skills/read-with-planreader` through a small payload pac
 - **Goal:** Check for and activate compatible releases without losing the previous working installation.
 - **Requirements:** R4, R11-R17, R20-R21, R23-R24
 - **Files:** `internal/release/client.go`, `internal/release/archive.go`, `internal/release/cache.go`, `internal/release/updater.go`, `internal/release/release_test.go`, `cmd/update.go`, `cmd/root.go`
-- **Approach:** Resolve a pinned GitHub release version, enforce HTTPS/host/redirect/size boundaries, verify the checksum manifest, validate archive paths, serialize updates with a lock, stage the release, and delegate activation to the installation transaction. Cache checks for 24 hours and make startup failures silent.
-- **Test scenarios:** Newer/equal/older and malformed versions; mutable-latest race prevention; checksum mismatch; unsafe archive entry; redirect or size rejection; `--check`; source build refusal and `--replace-source`; interrupted skill activation rollback; symlink switch failure; concurrent update lock; quiet cached startup notice.
+- **Approach:** Resolve a pinned GitHub release version, enforce HTTPS/host/redirect/size boundaries, verify the checksum manifest and Apple trust state, validate the exact archive allowlist, serialize updates with a lock, stage the release, and delegate activation to the journaled installation transaction. Cache checks for 24 hours and make startup failures silent.
+- **Test scenarios:** Newer/equal/older and malformed versions; mutable-latest race prevention; checksum or signature mismatch; unsafe archive entries including links and devices; redirect or size rejection; `--check`; source build refusal and `--replace-source`; process termination at every activation boundary with recovery to a complete old or new release; symlink switch failure; concurrent update lock; quiet cached startup notice.
 - **Verification:** `go test -mod=vendor ./internal/release ./internal/install ./cmd`
 
 ### U4. Bootstrap and release automation
@@ -278,15 +280,15 @@ The application embeds `skills/read-with-planreader` through a small payload pac
 - **Goal:** Publish a verifiable Apple-silicon package and provide a minimal bootstrap that hands control to Planreader.
 - **Requirements:** R1-R5, R11, R17-R19
 - **Files:** `install.sh`, `scripts/package-release.sh`, `scripts/test-install.sh`, `.github/workflows/release.yml`, `.github/workflows/ci.yml`
-- **Approach:** Package the binary, required sherpa dynamic libraries, and checksum metadata into a versioned archive. Build with vendored dependencies and injected metadata. Gate bootstrap on `Darwin/arm64`, download one pinned release and checksum, verify, extract safely, and invoke the staged binary's install command. Sign and notarize when release credentials are configured, with validation that unsigned publication cannot be mistaken for notarized output.
-- **Test scenarios:** Fixture release install without repository or Go; unsupported platform; checksum failure; missing asset; repeated bootstrap update; packaged binary version and dynamic-library smoke; workflow syntax and package validation.
+- **Approach:** Package the binary, required sherpa dynamic libraries, and checksum metadata into a versioned archive. Rewrite the executable rpath to `@loader_path`, normalize bundled dylib install names where required, then sign finalized dylibs and the executable before notarizing the archive. Build with vendored dependencies and injected metadata. Gate bootstrap on `Darwin/arm64`, download one pinned stable release and checksum, verify its Apple trust and exact contents, and invoke the staged binary's install command. Stable publication fails closed when signing or notarization credentials are absent.
+- **Test scenarios:** Fixture release install without repository or Go; unsupported platform; checksum failure; missing asset; repeated bootstrap update; `otool` confirms no repository rpath; packaged binary launches with the repository unavailable; workflow syntax and signed/notarized package validation.
 - **Verification:** `sh scripts/test-install.sh`; `go build -mod=vendor ./...`; package smoke on Apple silicon.
 
 ### U5. Skill parity and public installation guidance
 
 - **Goal:** Make conversational installation, reading, updating, status, and repair work identically through Claude and Codex.
 - **Requirements:** R1, R7-R10, R17-R24
-- **Files:** `skills/read-with-planreader/SKILL.md`, `skills/read-with-planreader/agents/openai.yaml`, `INSTALL.md`, `README.md`, `internal/payload/payload_test.go`
+- **Files:** `skills/read-with-planreader/SKILL.md`, `skills/read-with-planreader/agents/openai.yaml`, `INSTALL.md`, `README.md`, `skills/embed_test.go`
 - **Approach:** Rewrite the skill around the installed executable and provider-specific invocation. Add authoritative agent-readable installation guidance, a human bootstrap command, update/status/repair examples, source-build fallback using vendored dependencies, approval boundaries, and same-session path/reload expectations.
 - **Test scenarios:** Installed skill works from a non-repository directory for Claude and Codex; provider failures do not switch providers; install/update instructions never bypass approvals; both agent payloads match the release version; source fallback uses a temporary checkout and vendored build.
 - **Verification:** Payload assertions plus a fixture skill invocation smoke for each provider.
@@ -296,8 +298,8 @@ The application embeds `skills/read-with-planreader` through a small payload pac
 - **Goal:** Prove the supported journey and failure guarantees across all units.
 - **Requirements:** R1-R24; F1-F3; AE1-AE6
 - **Files:** `internal/install/integration_test.go`, `internal/release/integration_test.go`, `scripts/test-install.sh`
-- **Approach:** Compose temporary-home integration fixtures and local release servers. Exercise install, update, collision, partial integration, rollback, repair, shell refresh, and settings preservation without touching the developer's real home or network.
-- **Test scenarios:** Every acceptance example; stale binary/current skill; current binary/stale skill; interrupted second-agent activation; rerun convergence; active-session reload notice; clean update from a non-Planreader directory.
+- **Approach:** Compose temporary-home integration fixtures and local release servers. Exercise install, update, collision, partial integration, journal recovery, repair-on-rerun, shell refresh, and settings preservation without touching the developer's real home or network.
+- **Test scenarios:** Every acceptance example; stale binary/current skill; current binary/stale skill; process termination at each activation boundary; rerun convergence; active-session reload notice; clean update from a non-Planreader directory.
 - **Verification:** `go test -mod=vendor ./...`; `go vet -mod=vendor ./...`; `go build -mod=vendor ./...`; `sh scripts/test-install.sh`
 
 ---
@@ -313,7 +315,7 @@ The application embeds `skills/read-with-planreader` through a small payload pac
 | Release package smoke | `scripts/package-release.sh` followed by staged `planreader version` | Release metadata, bundled skill, binary layout, and required libraries |
 | Agent parity smoke | Run the installed skill from a temporary non-repository directory with fake Claude and Codex commands | Provider selection and repository independence |
 
-Network-independent tests must use local HTTP fixtures. Release publication requires a tagged Apple-silicon package whose checksum, signature, notarization state, embedded version, and packaged dynamic libraries pass validation.
+Network-independent tests must use local HTTP fixtures. Release publication requires a tagged Apple-silicon package whose checksum, Developer ID signature with the expected Team ID, notarization state, embedded version, portable rpaths, and packaged dynamic libraries pass validation. Unsigned artifacts are test fixtures only and the public bootstrap must refuse them.
 
 ---
 

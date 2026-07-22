@@ -3,18 +3,34 @@
 Planreader turns a local Markdown document into a simpler spoken companion.
 It uses the Claude Code or Codex installation and authentication already configured on your computer, then serves a private local reader with sentence highlighting. Computer speech works immediately; Apple silicon Mac users can optionally install a more natural local voice pack.
 
+## Install
+
+On an Apple-silicon Mac, ask Claude or Codex:
+
+> Install Planreader by following https://github.com/taylorwiebe/planreader/blob/main/INSTALL.md
+
+Or run the bootstrap installer yourself:
+
+```bash
+curl -fsSL https://github.com/taylorwiebe/planreader/releases/latest/download/install.sh | sh
+```
+
+This installs the latest verified release for the current user and configures the Planreader skill for detected Claude Code and Codex installations. It does not require a repository clone, Go, or administrator access. See [INSTALL.md](INSTALL.md) for update, source-build, security, and troubleshooting details.
+
 ## Requirements
 
-- Go 1.25 or newer to build from source
+- An Apple-silicon Mac for the release installer
 - Claude Code or Codex installed and signed in through your company-approved account
 - A browser with the Web Speech API, such as Safari or Chrome
-- Apple silicon is currently required only for optional neural voice packs
+- Go 1.25 or newer only when building from source
 
 ## Build
 
 ```bash
-go build -o planreader .
+go build -mod=vendor -o planreader .
 ```
+
+Install that source build and its skills with `./planreader install`.
 
 ## Use
 
@@ -69,6 +85,15 @@ The exact model route and retention guarantees still depend on your organization
 ## Development
 
 ```bash
-go test ./...
-go vet ./...
+go test -mod=vendor ./...
+go vet -mod=vendor ./...
+go build -mod=vendor ./...
 ```
+
+The executable follows Cobra's conventional layout: top-level `main.go` delegates to `cmd/root.go`. Product code is grouped by responsibility under `internal/`:
+
+- `internal/narration` turns Markdown into a structured human briefing through Claude Code or Codex.
+- `internal/install` manages the current-user executable, shell path, and agent skills.
+- `internal/release` verifies and activates published updates.
+- `internal/reader` serves the private local reading interface and embeds its web assets.
+- `internal/speech` owns voice models, preferences, downloads, and local synthesis.

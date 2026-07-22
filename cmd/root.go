@@ -85,6 +85,7 @@ func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 	flags.DurationVar(&config.timeout, "timeout", config.timeout, "maximum time to wait for the AI provider")
 	flags.BoolVar(&config.noOpen, "no-open", false, "print the reader URL without opening a browser")
 	flags.StringVar(&config.prepared, "prepared", "", "reuse a previously prepared Planreader data.json without calling an AI provider")
+	command.AddCommand(newVersionCommand(stdout), newInstallCommand(stdout), newUpdateCommand(stdout))
 	return command
 }
 
@@ -218,6 +219,7 @@ func serveReader(document reader.ReaderDocument, noOpen bool, stdout, stderr io.
 
 	fmt.Fprintf(stdout, "Reader ready: %s\n", url)
 	fmt.Fprintln(stdout, "Press Control-C when you are finished.")
+	startUpdateNotice(stdout)
 	if !noOpen {
 		if err := reader.OpenBrowser(url); err != nil {
 			fmt.Fprintf(stderr, "Could not open the browser automatically: %v\n", err)

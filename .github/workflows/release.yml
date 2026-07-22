@@ -1,0 +1,55 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with: {go-version-file: go.mod, cache: true}
+      - name: Require signing and notarization secrets
+        env:
+          CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
+          PASS: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID_VALUE: ${{ secrets.APPLE_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: test -n "$CERT" && test -n "$PASS" && test -n "$IDENTITY" && test -n "$TEAM" && test -n "$APPLE_ID_VALUE" && test -n "$APP_PASSWORD"
+      - name: Import Developer ID certificate
+        env:
+          CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
+          PASS: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          echo "$CERT" | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain -P "$PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+      - name: Package, sign, and notarize
+        env:
+          VERSION: ${{ github.ref_name }}
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: sh scripts/package-release.sh
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          rm -f certificate.p12
+          security default-keychain -s login.keychain-db
+          security delete-keychain build.keychain || true
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ github.ref_name }}/planreader-${{ github.ref_name }}-darwin-arm64.tar.gz
+            dist/${{ github.ref_name }}/checksums.txt
+            dist/${{ github.ref_name }}/install.sh
