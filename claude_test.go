@@ -73,3 +73,20 @@ func TestClaudeRunnerReportsCommandFailureWithoutDocument(t *testing.T) {
 		t.Fatalf("Generate() error leaked document content: %v", err)
 	}
 }
+
+func TestNarrationPromptProducesASelfContainedHumanBriefing(t *testing.T) {
+	prompt := createNarrationPrompt("# Plan\nSee `auth.go` and requirement R-12.", ReaderOptions{})
+
+	for _, instruction := range []string{
+		"What is being proposed",
+		"Why it matters",
+		"Risks and unresolved questions",
+		"Resolve references inline",
+		"complete sentences",
+		"Details worth knowing",
+	} {
+		if !strings.Contains(prompt, instruction) {
+			t.Fatalf("narration prompt is missing human-reader instruction %q", instruction)
+		}
+	}
+}
