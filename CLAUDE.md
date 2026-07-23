@@ -8,4 +8,6 @@ go vet -mod=vendor ./...
 go build -mod=vendor ./...
 ```
 
+After running `go mod vendor`, run `scripts/resign-vendor-dylibs.sh` — upstream sherpa-onnx dylibs ship with invalid ad-hoc signatures, and loading one poisons the file for every process that later maps it (git dies hashing the working tree).
+
 Use the `read-with-planreader` skill whenever a user asks to open, simplify, narrate, listen to, or make a spoken briefing from a Markdown document. Keep the narration prompt and quality rules in `internal/narration`; do not duplicate them in agent instructions.

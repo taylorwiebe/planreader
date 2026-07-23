@@ -1,11 +1,15 @@
 package install
 
 import (
+	"bytes"
+	"debug/macho"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type Service struct {
@@ -51,6 +55,9 @@ func (s Service) Install() (Result, error) {
 	}
 	if err := copyAdjacentLibraries(s.Executable, p.versionDir); err != nil {
 		return result, err
+	}
+	if err := containSourceLibraries(p.binary, p.versionDir); err != nil {
+		return result, fmt.Errorf("containing source-build libraries: %w", err)
 	}
 	if err := writeManifest(p.versionDir, manifest{"planreader", s.Version, s.Origin}); err != nil {
 		return result, err
@@ -168,6 +175,99 @@ func (s Service) Install() (Result, error) {
 	}
 	result.Version, result.Command, result.PathChanged = s.Version, p.command, changed
 	return result, nil
+}
+
+// containSourceLibraries rewrites a source build to match release payloads:
+// libraries copied beside the executable and reached through @loader_path/lib.
+// A source build otherwise keeps an absolute rpath into its build checkout,
+// leaving the installed executable dependent on that checkout's vendored
+// dylibs — whose upstream code signatures are not trustworthy to stay valid.
+func containSourceLibraries(binary, versionDir string) error {
+	rpaths, libraries := machoCheckoutDependencies(binary)
+	if len(rpaths) == 0 || len(libraries) == 0 {
+		return nil
+	}
+	installNameTool, err := exec.LookPath("install_name_tool")
+	if err != nil {
+		// Without developer tools the rpath cannot be rewritten; keep the
+		// checkout-dependent binary rather than failing the install.
+		return nil
+	}
+	libDir := filepath.Join(versionDir, "lib")
+	contained := false
+	for _, rpath := range rpaths {
+		found := false
+		for _, name := range libraries {
+			source := filepath.Join(rpath, name)
+			if _, err := os.Stat(source); err != nil {
+				continue
+			}
+			if err := os.MkdirAll(libDir, 0o700); err != nil {
+				return err
+			}
+			destination := filepath.Join(libDir, name)
+			if err := copyFile(source, destination, 0o644); err != nil {
+				return err
+			}
+			if err := runTool("codesign", "--force", "--sign", "-", destination); err != nil {
+				return err
+			}
+			found = true
+		}
+		if !found {
+			continue
+		}
+		if contained {
+			if err := runTool(installNameTool, "-delete_rpath", rpath, binary); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := runTool(installNameTool, "-rpath", rpath, "@loader_path/lib", binary); err != nil {
+			return err
+		}
+		contained = true
+	}
+	if !contained {
+		return nil
+	}
+	// install_name_tool invalidates the executable's ad-hoc signature; macOS
+	// kills unsigned arm64 executables, so it must be re-signed.
+	return runTool("codesign", "--force", "--sign", "-", binary)
+}
+
+// machoCheckoutDependencies returns the executable's absolute rpath entries
+// and the library names it expects to resolve through @rpath. Non-Mach-O
+// executables report nothing.
+func machoCheckoutDependencies(binary string) (rpaths, libraries []string) {
+	file, err := macho.Open(binary)
+	if err != nil {
+		return nil, nil
+	}
+	defer file.Close()
+	for _, load := range file.Loads {
+		if rpath, ok := load.(*macho.Rpath); ok && filepath.IsAbs(rpath.Path) {
+			rpaths = append(rpaths, rpath.Path)
+		}
+	}
+	imported, err := file.ImportedLibraries()
+	if err != nil {
+		return nil, nil
+	}
+	for _, library := range imported {
+		if name, ok := strings.CutPrefix(library, "@rpath/"); ok {
+			libraries = append(libraries, name)
+		}
+	}
+	return rpaths, libraries
+}
+
+func runTool(tool string, args ...string) error {
+	output, err := exec.Command(tool, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %v: %s", filepath.Base(tool), err, bytes.TrimSpace(output))
+	}
+	return nil
 }
 
 func copyAdjacentLibraries(executable, versionDir string) error {
