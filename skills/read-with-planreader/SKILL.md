@@ -1,30 +1,35 @@
 ---
 name: read-with-planreader
-description: Turn a local Markdown document into Planreader's clear, private spoken companion and open the reader. Use when the user asks to open, read, listen to, simplify, narrate, brief, or make an audiobook from a Markdown file, plan, specification, or technical document with Planreader.
+description: Turn a local Markdown document into Planreader's clear, private spoken companion and manage the Planreader installation. Use when the user asks to open, read, listen to, simplify, narrate, brief, or make an audiobook from Markdown, or asks to install, update, check, or repair Planreader.
 ---
 
 # Read with Planreader
 
 Use Planreader as the single source of truth for preparing the human-readable narration. Do not summarize the document separately or reproduce Planreader's narration prompt in this skill.
 
+## Manage Planreader
+
+- When the user asks to update, check, or repair Planreader, run `planreader update` from their current working directory.
+- Relay the version result and every Claude or Codex integration status. Never hide a `needs attention` or `not detected` result.
+- After an install or update changes a skill, tell the user to start a new Claude or Codex session to load it.
+
 ## Run the document
 
-1. Locate the Planreader repository with `git rev-parse --show-toplevel` from the user's current worktree. Confirm it is Planreader by checking for `go.mod` and `cmd/root.go`.
-2. Resolve the requested Markdown path. Treat relative paths as relative to the user's current working directory.
-3. Confirm that the source is a readable regular `.md` file. Never modify it.
-4. Select the provider that matches the current agent:
+1. Resolve the requested Markdown path. Treat relative paths as relative to the user's current working directory.
+2. Confirm that the source is a readable regular `.md` file. Never modify it.
+3. Select the provider that matches the current agent:
    - In Claude Code, pass `--provider claude`.
    - In Codex, pass `--provider codex`.
    - Never switch providers to bypass authentication, quota, or policy failures unless the user explicitly asks.
-5. From the Planreader repository, run:
+4. Run the installed Planreader command from the user's current working directory:
 
    ```sh
-   go run -mod=vendor . --provider PROVIDER --depth working DOCUMENT.md
+   planreader --provider PROVIDER --depth working DOCUMENT.md
    ```
 
    Use `briefing` for a quick overview, `working` by default, and `full` only when the user requests comprehensive detail. Add `--audience` when the user states what they know or which jargon needs explanation.
-6. Keep the process running. Wait for `Reader ready:` and open or navigate to that URL when the environment permits it. If Planreader already opened the browser, do not open a duplicate tab.
-7. Tell the user that the reader is ready and which provider was used. Do not dump generation logs or narration into chat.
+5. Keep the process running. Wait for `Reader ready:` and open or navigate to that URL when the environment permits it. If Planreader already opened the browser, do not open a duplicate tab.
+6. Tell the user that the reader is ready and which provider was used. Do not dump generation logs or narration into chat.
 
 ## Preserve narration quality
 
