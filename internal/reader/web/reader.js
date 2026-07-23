@@ -55,6 +55,8 @@
     localRetryCount: 0,
   };
   const localAudioLookahead = 6;
+  const localStartupBufferSize = 3;
+  const localStartupBufferWait = 2_000;
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -300,11 +302,27 @@
   }
 
   function warmLocalAudioAhead(index = state.index) {
-    let queue = Promise.resolve();
     for (let offset = 0; offset <= localAudioLookahead; offset += 1) {
-      queue = queue.then(() => prepareLocalAudio(index + offset));
+      warmLocalAudio(index + offset);
     }
-    queue.catch(() => {});
+  }
+
+  async function waitForLocalStartupBuffer(index) {
+    if (state.engine !== "local" || index !== 0) return;
+    const pending = [];
+    for (let offset = 0; offset < localStartupBufferSize; offset += 1) {
+      const audio = prepareLocalAudio(index + offset);
+      if (audio) pending.push(audio);
+    }
+    if (!pending.length) return;
+    elements.status.textContent = "Preparing your reader…";
+    let timeoutID;
+    const buffered = Promise.allSettled(pending);
+    const timeout = new Promise((resolve) => {
+      timeoutID = window.setTimeout(resolve, localStartupBufferWait);
+    });
+    await Promise.race([buffered, timeout]);
+    window.clearTimeout(timeoutID);
   }
 
   function releasePrimedAudio() {
@@ -372,10 +390,12 @@
     return audio;
   }
 
-  async function speakLocal(playbackID) {
+  async function speakLocal(playbackID, waitForStartupBuffer = false) {
     const index = state.index;
     const continuePlaying = state.playRequested;
-    const result = await prepareLocalAudio(index);
+    const resultPending = prepareLocalAudio(index);
+    if (waitForStartupBuffer) await waitForLocalStartupBuffer(index);
+    const result = await resultPending;
     if (!state.playing || playbackID !== state.playbackID) return;
     const context = state.primedAudio;
     state.primedAudio = null;
@@ -460,7 +480,7 @@
     elements.status.textContent = `Speech error: ${message}`;
   }
 
-  function speakCurrent() {
+  function speakCurrent(waitForStartupBuffer = false) {
     if (!state.sentences[state.index]) {
       stopPlayback();
       return;
@@ -475,7 +495,7 @@
     if (state.engine === "local") {
       elements.status.textContent = "";
       updateAudioLoading();
-      speakLocal(playbackID).catch((error) => failSpeech(playbackID, error.message));
+      speakLocal(playbackID, waitForStartupBuffer).catch((error) => failSpeech(playbackID, error.message));
       return;
     }
     const utterance = new SpeechSynthesisUtterance(state.sentences[state.index].text);
@@ -516,7 +536,7 @@
       syncPlaybackUI();
       return;
     }
-    speakCurrent();
+    speakCurrent(true);
   }
 
   function playFrom(index) {

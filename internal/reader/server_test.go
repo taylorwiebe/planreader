@@ -145,6 +145,26 @@ func TestLocalAudioContinuesPlayingAfterAQueuedBlockLoads(t *testing.T) {
 	}
 }
 
+func TestLocalAudioBuffersTheDocumentStartBeforeInitialPlayback(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(script)
+	for _, expected := range []string{
+		"const localStartupBufferSize = 3",
+		"const localStartupBufferWait = 2_000",
+		"async function waitForLocalStartupBuffer(index)",
+		"Promise.race([buffered, timeout])",
+		"elements.status.textContent = \"Preparing your reader…\"",
+		"speakCurrent(true)",
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Fatalf("reader does not briefly buffer the document start before initial playback; missing %q", expected)
+		}
+	}
+}
+
 func TestPlaybackStateFollowsAudioAndKeyboardMediaControls(t *testing.T) {
 	script, err := fs.ReadFile(webFiles, "web/reader.js")
 	if err != nil {
