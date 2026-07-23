@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/taylorwiebe/planreader/internal/narration"
 )
@@ -416,6 +417,65 @@ func TestReaderHandlerServesDocumentData(t *testing.T) {
 	}
 	if got.Narration.Title != "Plan" {
 		t.Fatalf("title = %q, want Plan", got.Narration.Title)
+	}
+}
+
+func TestAgentLifecycleShutdownRequiresPost(t *testing.T) {
+	shutdown := make(chan struct{}, 1)
+	handler := newReaderHandlerWithSpeechAndLifecycle(ReaderDocument{
+		FileName:  "plan.md",
+		Narration: narration.Narration{Title: "Plan", Sections: []narration.NarrationSection{{ID: "intro", Heading: "Intro", Sentences: []string{"Hello."}}}},
+	}, "secret-token", nil, newAgentLifecycle(func() { shutdown <- struct{}{} }, time.Minute, time.Hour))
+
+	getRequest := httptest.NewRequest(http.MethodGet, "/reader/secret-token/api/agent/shutdown", nil)
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, getRequest)
+	if getResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want %d", getResponse.Code, http.StatusMethodNotAllowed)
+	}
+
+	postRequest := httptest.NewRequest(http.MethodPost, "/reader/secret-token/api/agent/shutdown", nil)
+	postResponse := httptest.NewRecorder()
+	handler.ServeHTTP(postResponse, postRequest)
+	if postResponse.Code != http.StatusNoContent {
+		t.Fatalf("POST status = %d, want %d", postResponse.Code, http.StatusNoContent)
+	}
+	select {
+	case <-shutdown:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown callback was not called")
+	}
+}
+
+func TestAgentLifecycleWaitsForMissingBrowserHeartbeat(t *testing.T) {
+	shutdown := make(chan struct{}, 1)
+	lifecycle := newAgentLifecycle(func() { shutdown <- struct{}{} }, 20*time.Millisecond, time.Hour)
+	defer lifecycle.Close()
+
+	lifecycle.Heartbeat("tab-one")
+	time.Sleep(10 * time.Millisecond)
+	lifecycle.Heartbeat("tab-one")
+	select {
+	case <-shutdown:
+		t.Fatal("active heartbeat shut the reader down")
+	case <-time.After(15 * time.Millisecond):
+	}
+	select {
+	case <-shutdown:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("missing heartbeat did not shut the reader down")
+	}
+}
+
+func TestAgentManagedReaderScriptReportsBrowserLifecycle(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"api/agent/heartbeat", "pagehide", `request("DELETE", true)`} {
+		if !strings.Contains(string(script), expected) {
+			t.Fatalf("reader script is missing agent lifecycle behavior %q", expected)
+		}
 	}
 }
 

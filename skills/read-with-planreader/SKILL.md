@@ -24,12 +24,20 @@ Use Planreader as the single source of truth for preparing the human-readable na
 4. Run the installed Planreader command from the user's current working directory:
 
    ```sh
-   planreader --provider PROVIDER --depth working DOCUMENT.md
+   planreader --agent-managed --provider PROVIDER --depth working DOCUMENT.md
    ```
 
    Use `briefing` for a quick overview, `working` by default, and `full` only when the user requests comprehensive detail. Add `--audience` when the user states what they know or which jargon needs explanation.
-5. Keep the process running. Wait for `Reader ready:` and open or navigate to that URL when the environment permits it. If Planreader already opened the browser, do not open a duplicate tab.
+5. Keep the process handle returned by the command. Wait for `Reader ready:` and open or navigate to that URL when the environment permits it. If Planreader already opened the browser, do not open a duplicate tab. Agent-managed mode replaces an older agent-launched reader and stops automatically after its browser tab disappears.
 6. Tell the user that the reader is ready and which provider was used. Do not dump generation logs or narration into chat.
+
+## Own the reader process
+
+- Never launch Planreader in the background without retaining its process or session handle.
+- Before the Claude or Codex session ends, interrupt any Planreader process that this session launched and wait for it to exit. Do this even after an error or an interrupted task.
+- When the user says they are done reading, close the reader process immediately.
+- Do not stop a manually launched Planreader process. Agent cleanup applies only to commands started with `--agent-managed` by the current session.
+- If cleanup cannot be confirmed, tell the user instead of silently leaving a process behind.
 
 ## Preserve narration quality
 

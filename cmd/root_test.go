@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,13 +14,35 @@ import (
 	"github.com/taylorwiebe/planreader/internal/reader"
 )
 
+func TestClaimAgentReaderStopsPreviouslyRegisteredReader(t *testing.T) {
+	registry := filepath.Join(t.TempDir(), agentReaderFile)
+	previousURL := "http://127.0.0.1:4321/reader/old/"
+	if err := os.WriteFile(registry, []byte(previousURL), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stopped string
+	cleanup, err := claimAgentReaderAt(registry, "http://127.0.0.1:1234/reader/new/", func(readerURL string) {
+		stopped = readerURL
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped != previousURL {
+		t.Fatalf("stopped reader = %q, want %q", stopped, previousURL)
+	}
+	cleanup()
+	if _, err := os.Stat(registry); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("registry still exists after cleanup: %v", err)
+	}
+}
+
 func TestRootCommandProvidesCobraHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	if err := run([]string{"--help"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Turn Markdown into a clear, private spoken companion", "--provider", "--prepared"} {
+	for _, expected := range []string{"Turn Markdown into a clear, private spoken companion", "--provider", "--prepared", "--agent-managed"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("help output is missing %q: %s", expected, stdout.String())
 		}

@@ -57,10 +57,14 @@ func RenderSourceSections(sections []narration.SourceSection) ([]RenderedSourceS
 }
 
 func newReaderHandler(document ReaderDocument, token string) http.Handler {
-	return newReaderHandlerWithSpeech(document, token, nil)
+	return newReaderHandlerWithSpeechAndLifecycle(document, token, nil, nil)
 }
 
 func newReaderHandlerWithSpeech(document ReaderDocument, token string, speechService *speech.Service) http.Handler {
+	return newReaderHandlerWithSpeechAndLifecycle(document, token, speechService, nil)
+}
+
+func newReaderHandlerWithSpeechAndLifecycle(document ReaderDocument, token string, speechService *speech.Service, lifecycle *agentLifecycle) http.Handler {
 	prefix := "/reader/" + token + "/"
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -82,6 +86,10 @@ func newReaderHandlerWithSpeech(document ReaderDocument, token string, speechSer
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
+		if lifecycle != nil && strings.HasPrefix(asset, "api/agent/") {
+			lifecycle.ServeHTTP(w, r, strings.TrimPrefix(asset, "api/"))
+			return
+		}
 		if speechService != nil && strings.HasPrefix(asset, "api/") {
 			speechService.HandleAPI(w, r, strings.TrimPrefix(asset, "api/"), prefix)
 			return
@@ -114,7 +122,7 @@ func newReaderHandlerWithSpeech(document ReaderDocument, token string, speechSer
 	})
 }
 
-func StartServer(document ReaderDocument) (string, *http.Server, error) {
+func StartServer(document ReaderDocument, shutdownRequested func()) (string, *http.Server, error) {
 	speechService, err := speech.NewService()
 	if err != nil {
 		return "", nil, err
@@ -131,12 +139,19 @@ func StartServer(document ReaderDocument) (string, *http.Server, error) {
 		speechService.Close()
 		return "", nil, fmt.Errorf("starting local reader: %w", err)
 	}
+	var lifecycle *agentLifecycle
+	if shutdownRequested != nil {
+		lifecycle = newAgentLifecycle(shutdownRequested, 2*time.Minute, 12*time.Hour)
+	}
 	server := &http.Server{
-		Handler:           newReaderHandlerWithSpeech(document, token, speechService),
+		Handler:           newReaderHandlerWithSpeechAndLifecycle(document, token, speechService, lifecycle),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
 		_ = server.Serve(listener)
+		if lifecycle != nil {
+			lifecycle.Close()
+		}
 		speechService.Close()
 	}()
 

@@ -797,10 +797,29 @@
       highlight(0);
       elements.status.textContent = "Ready";
       warmLocalAudioAhead(0);
+      startAgentLifecycle();
     } catch (error) {
       elements.title.textContent = "The reader could not load";
       elements.status.textContent = error.message;
     }
+  }
+
+  function startAgentLifecycle() {
+    const sessionID = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    const request = (method, keepalive = false) => fetch("api/agent/heartbeat", {
+      method,
+      headers: { "X-Planreader-Session": sessionID },
+      keepalive,
+    });
+    let heartbeatTimer;
+    request("POST").then((response) => {
+      if (!response.ok) return;
+      heartbeatTimer = window.setInterval(() => request("POST").catch(() => {}), 30_000);
+      window.addEventListener("pagehide", () => {
+        window.clearInterval(heartbeatTimer);
+        request("DELETE", true).catch(() => {});
+      }, { once: true });
+    }).catch(() => {});
   }
 
   start();

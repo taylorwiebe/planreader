@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ type options struct {
 	timeout       time.Duration
 	noOpen        bool
 	prepared      string
+	agentManaged  bool
 }
 
 func Execute() {
@@ -85,6 +87,7 @@ func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 	flags.DurationVar(&config.timeout, "timeout", config.timeout, "maximum time to wait for the AI provider")
 	flags.BoolVar(&config.noOpen, "no-open", false, "print the reader URL without opening a browser")
 	flags.StringVar(&config.prepared, "prepared", "", "reuse a previously prepared Planreader data.json without calling an AI provider")
+	flags.BoolVar(&config.agentManaged, "agent-managed", false, "replace older agent readers and stop when the browser is gone")
 	command.AddCommand(newVersionCommand(stdout), newInstallCommand(stdout), newUpdateCommand(stdout))
 	return command
 }
@@ -95,7 +98,7 @@ func runReader(config options, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return serveReader(document, config.noOpen, stdout, stderr)
+		return serveReader(document, config.noOpen, config.agentManaged, stdout, stderr)
 	}
 
 	depthPrompt, ok := map[string]string{
@@ -185,7 +188,7 @@ func runReader(config options, args []string, stdout, stderr io.Writer) error {
 		Narration: generated,
 		Sources:   renderedSources,
 	}
-	return serveReader(document, config.noOpen, stdout, stderr)
+	return serveReader(document, config.noOpen, config.agentManaged, stdout, stderr)
 }
 
 func readPreparedDocument(path string) (reader.ReaderDocument, error) {
@@ -204,10 +207,16 @@ func readPreparedDocument(path string) (reader.ReaderDocument, error) {
 	return document, nil
 }
 
-func serveReader(document reader.ReaderDocument, noOpen bool, stdout, stderr io.Writer) error {
+func serveReader(document reader.ReaderDocument, noOpen, agentManaged bool, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	url, server, err := reader.StartServer(document)
+	agentShutdown := make(chan struct{})
+	var shutdownOnce sync.Once
+	var shutdownRequested func()
+	if agentManaged {
+		shutdownRequested = func() { shutdownOnce.Do(func() { close(agentShutdown) }) }
+	}
+	url, server, err := reader.StartServer(document, shutdownRequested)
 	if err != nil {
 		return err
 	}
@@ -216,6 +225,14 @@ func serveReader(document reader.ReaderDocument, noOpen bool, stdout, stderr io.
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
+	if agentManaged {
+		cleanup, err := claimAgentReader(url)
+		if err != nil {
+			fmt.Fprintf(stderr, "Could not register agent-managed cleanup: %v\n", err)
+		} else {
+			defer cleanup()
+		}
+	}
 
 	fmt.Fprintf(stdout, "Reader ready: %s\n", url)
 	fmt.Fprintln(stdout, "Press Control-C when you are finished.")
@@ -226,7 +243,11 @@ func serveReader(document reader.ReaderDocument, noOpen bool, stdout, stderr io.
 		}
 	}
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-agentShutdown:
+		return nil
+	}
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		return ctx.Err()
 	}
