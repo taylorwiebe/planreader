@@ -35,6 +35,7 @@
     index: 0,
     playing: false,
     paused: false,
+    playRequested: false,
     utterance: null,
     voices: [],
     selectedVoice: null,
@@ -53,6 +54,7 @@
     localRetryIndex: -1,
     localRetryCount: 0,
   };
+  const localAudioLookahead = 6;
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -298,9 +300,11 @@
   }
 
   function warmLocalAudioAhead(index = state.index) {
-    const current = prepareLocalAudio(index);
-    if (!current) return;
-    current.then(() => prepareLocalAudio(index + 1)).then(() => prepareLocalAudio(index + 2)).catch(() => {});
+    let queue = Promise.resolve();
+    for (let offset = 0; offset <= localAudioLookahead; offset += 1) {
+      queue = queue.then(() => prepareLocalAudio(index + offset));
+    }
+    queue.catch(() => {});
   }
 
   function releasePrimedAudio() {
@@ -370,6 +374,7 @@
 
   async function speakLocal(playbackID) {
     const index = state.index;
+    const continuePlaying = state.playRequested;
     const result = await prepareLocalAudio(index);
     if (!state.playing || playbackID !== state.playbackID) return;
     const context = state.primedAudio;
@@ -400,7 +405,9 @@
     });
     audio.onended = () => advance(playbackID);
     audio.onerror = () => failSpeech(playbackID, "The generated audio could not be played");
-    if (!state.paused) {
+    if (continuePlaying && state.playing && state.playRequested) {
+      state.paused = false;
+      syncPlaybackUI();
       await audio.play();
       state.localRetryIndex = -1;
       state.localRetryCount = 0;
@@ -463,6 +470,7 @@
     highlight(state.index);
     state.playing = true;
     state.paused = false;
+    state.playRequested = true;
     syncPlaybackUI();
     if (state.engine === "local") {
       elements.status.textContent = "";
@@ -490,6 +498,7 @@
 
   function togglePlayback() {
     if (state.playing && !state.paused) {
+      state.playRequested = false;
       if (state.engine === "local" && state.audio) state.audio.pause();
       else speechSynthesis.pause();
       state.paused = true;
@@ -498,6 +507,7 @@
       return;
     }
     if (state.playing && state.paused) {
+      state.playRequested = true;
       if (state.engine === "local" && state.audio) {
         state.audio.play();
         warmLocalAudioAhead(state.index + 1);
@@ -524,6 +534,7 @@
     releasePrimedAudio();
     state.playing = false;
     state.paused = false;
+    state.playRequested = false;
     state.utterance = null;
     syncPlaybackUI();
   }
@@ -797,7 +808,7 @@
       highlight(0);
       elements.status.textContent = "Ready";
       warmLocalAudioAhead(0);
-      startAgentLifecycle();
+      if (readerDocument.agent_managed) startAgentLifecycle();
     } catch (error) {
       elements.title.textContent = "The reader could not load";
       elements.status.textContent = error.message;

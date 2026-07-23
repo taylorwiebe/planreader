@@ -26,9 +26,10 @@ import (
 var webFiles embed.FS
 
 type ReaderDocument struct {
-	FileName  string                  `json:"file_name"`
-	Narration narration.Narration     `json:"narration"`
-	Sources   []RenderedSourceSection `json:"sources"`
+	FileName     string                  `json:"file_name"`
+	Narration    narration.Narration     `json:"narration"`
+	Sources      []RenderedSourceSection `json:"sources"`
+	AgentManaged bool                    `json:"agent_managed,omitempty"`
 }
 
 type RenderedSourceSection struct {
@@ -66,6 +67,7 @@ func newReaderHandlerWithSpeech(document ReaderDocument, token string, speechSer
 
 func newReaderHandlerWithSpeechAndLifecycle(document ReaderDocument, token string, speechService *speech.Service, lifecycle *agentLifecycle) http.Handler {
 	prefix := "/reader/" + token + "/"
+	document.AgentManaged = lifecycle != nil
 	data, err := json.Marshal(document)
 	if err != nil {
 		panic(fmt.Sprintf("encoding reader document: %v", err))

@@ -113,14 +113,34 @@ func TestReaderPrefetchesLocalAudioAndInvalidatesItWhenSettingsChange(t *testing
 	javascript := string(script)
 	for _, expected := range []string{
 		"localAudio: new Map()",
+		"const localAudioLookahead = 6",
 		"const existing = state.localAudio.get(key)",
 		"warmLocalAudioAhead(index)",
-		"current.then(() => prepareLocalAudio(index + 1)).then(() => prepareLocalAudio(index + 2))",
+		"for (let offset = 0; offset <= localAudioLookahead; offset += 1)",
 		"clearLocalAudio();",
 		"warmLocalAudioAhead(0)",
 	} {
 		if !strings.Contains(javascript, expected) {
 			t.Fatalf("reader JavaScript does not prefetch and invalidate local audio; missing %q", expected)
+		}
+	}
+}
+
+func TestLocalAudioContinuesPlayingAfterAQueuedBlockLoads(t *testing.T) {
+	script, err := fs.ReadFile(webFiles, "web/reader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(script)
+	for _, expected := range []string{
+		"playRequested: false",
+		"const continuePlaying = state.playRequested",
+		"if (continuePlaying && state.playing && state.playRequested)",
+		"state.playRequested = false",
+		"await audio.play()",
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Fatalf("reader does not preserve continuous playback while queued audio loads; missing %q", expected)
 		}
 	}
 }
@@ -418,6 +438,30 @@ func TestReaderHandlerServesDocumentData(t *testing.T) {
 	if got.Narration.Title != "Plan" {
 		t.Fatalf("title = %q, want Plan", got.Narration.Title)
 	}
+	if got.AgentManaged {
+		t.Fatal("ordinary reader data incorrectly enables the agent heartbeat")
+	}
+}
+
+func TestAgentManagedReaderDataEnablesBrowserHeartbeat(t *testing.T) {
+	lifecycle := newAgentLifecycle(func() {}, time.Minute, time.Hour)
+	defer lifecycle.Close()
+	handler := newReaderHandlerWithSpeechAndLifecycle(ReaderDocument{
+		FileName:  "plan.md",
+		Narration: narration.Narration{Title: "Plan"},
+	}, "secret-token", nil, lifecycle)
+
+	request := httptest.NewRequest(http.MethodGet, "/reader/secret-token/data.json", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	var got ReaderDocument
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.AgentManaged {
+		t.Fatal("agent-managed reader data does not enable the browser heartbeat")
+	}
 }
 
 func TestAgentLifecycleShutdownRequiresPost(t *testing.T) {
@@ -472,7 +516,7 @@ func TestAgentManagedReaderScriptReportsBrowserLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"api/agent/heartbeat", "pagehide", `request("DELETE", true)`} {
+	for _, expected := range []string{"readerDocument.agent_managed", "api/agent/heartbeat", "pagehide", `request("DELETE", true)`} {
 		if !strings.Contains(string(script), expected) {
 			t.Fatalf("reader script is missing agent lifecycle behavior %q", expected)
 		}
